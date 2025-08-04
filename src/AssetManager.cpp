@@ -12,6 +12,8 @@ namespace fs = std::filesystem;
 // Constructor now takes the AppConfig object
 AssetManager::AssetManager(const AppConfig& config)
     : appConfig(config) {
+    // Default color, in case no mapping is found
+    activeForegroundColor = cv::Scalar(255, 255, 255); // White
 }
 
 // Main initialization function
@@ -39,6 +41,11 @@ void AssetManager::saveKeyMapping() const {
     saveKeyMapping(appConfig.keyMappingFile);
 }
 
+// Set the active foreground color
+void AssetManager::setActiveForegroundColor(const cv::Scalar& color) {
+    activeForegroundColor = color;
+}
+
 // Helper to scan directories for visual assets
 void AssetManager::scanAssets() {
     assets.clear();
@@ -49,9 +56,10 @@ void AssetManager::scanAssets() {
     if (fs::exists(backgroundsPath) && fs::is_directory(backgroundsPath)) {
         for (const auto& entry : fs::directory_iterator(backgroundsPath)) {
             if (entry.is_regular_file()) {
+                std::string filename = entry.path().filename().string();
                 std::string extension = entry.path().extension().string();
                 if (extension == ".mp4" || extension == ".mov") {
-                    assets.push_back({entry.path().string(), BACKGROUND, 0});
+                    assets.push_back({entry.path().string(), BACKGROUND, 0, 100.0});
                 }
             }
         }
@@ -61,9 +69,14 @@ void AssetManager::scanAssets() {
     if (fs::exists(foregroundsPath) && fs::is_directory(foregroundsPath)) {
         for (const auto& entry : fs::directory_iterator(foregroundsPath)) {
             if (entry.is_regular_file()) {
+                std::string filename = entry.path().filename().string();
                 std::string extension = entry.path().extension().string();
                 if (extension == ".png" || extension == ".jpg") {
-                    assets.push_back({entry.path().string(), FOREGROUND, 0});
+                    double scale = 100.0;
+                    if (appConfig.foregroundScales.count(filename)) {
+                        scale = appConfig.foregroundScales.at(filename);
+                    }
+                    assets.push_back({entry.path().string(), FOREGROUND, 0, scale});
                 }
             }
         }
@@ -157,8 +170,8 @@ void AssetManager::saveKeyMapping(const std::string& mappingFilePath) const {
     std::cout << "Key mapping saved to " << mappingFilePath << "\n";
 }
 
-// Public method to blend foreground with alpha channel onto a background, keeping constant height
-cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground) {
+// Public method to blend foreground with alpha channel onto a background
+cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground, int screenWidth, int screenHeight, double foregroundScalePercent) {
     if (background.empty() || foreground.empty()) {
         return background;
     }
@@ -166,12 +179,36 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
     cv::Mat blended = background.clone();
     cv::Mat resizedForeground;
     
-    // Define a constant width for the foreground from the config file
-    const int targetWidth = appConfig.foregroundWidth;
+    // Calculate the target width based on the screen width and scale percentage
+    int targetWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
     
     // Calculate new height to maintain aspect ratio
     double aspectRatio = static_cast<double>(foreground.rows) / foreground.cols;
     int newHeight = static_cast<int>(targetWidth * aspectRatio);
+
+    // Check if the calculated dimensions are too big for the screen
+    bool scaleAdjusted = false;
+    if (targetWidth > screenWidth || newHeight > screenHeight) {
+        std::cout << "Warning: Foreground scale is too large. Adjusting to fit screen." << std::endl;
+        
+        // Recalculate dimensions to fit the screen while maintaining aspect ratio
+        if (targetWidth > screenWidth) {
+            targetWidth = screenWidth;
+            newHeight = static_cast<int>(targetWidth * aspectRatio);
+        }
+        if (newHeight > screenHeight) {
+            newHeight = screenHeight;
+            targetWidth = static_cast<int>(newHeight / aspectRatio);
+        }
+        
+        // Calculate the maximum possible scale
+        double maxScaleWidth = (static_cast<double>(screenWidth) / foreground.cols) * 100.0;
+        double maxScaleHeight = (static_cast<double>(screenHeight) / foreground.rows) * 100.0;
+        double maxScale = std::min(maxScaleWidth, maxScaleHeight);
+        
+        std::cout << "Suggestion: To prevent this, set foreground_scale_percent to a value less than or equal to " << maxScale << "%." << std::endl;
+        scaleAdjusted = true;
+    }
 
     // Resize the foreground image
     cv::resize(foreground, resizedForeground, cv::Size(targetWidth, newHeight));
@@ -207,14 +244,14 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
         // Split the foreground into BGR and Alpha channels
         std::vector<cv::Mat> channels;
         cv::split(adjustedForeground, channels);
-        cv::Mat bgr[3] = { channels[0], channels[1], channels[2] };
+        cv::Mat bgr = adjustedForeground.clone();
         cv::Mat alpha = channels[3];
 
-        cv::Mat merged_bgr;
-        cv::merge(bgr, 3, merged_bgr);
+        // Create a new foreground image with a single, custom color
+        cv::Mat solidColorForeground(adjustedForeground.size(), CV_8UC3, activeForegroundColor);
 
-        // Copy the foreground to the ROI using the alpha channel as a mask
-        merged_bgr.copyTo(blended(safeRoi), alpha);
+        // Copy the solid color to the ROI using the alpha channel as a mask
+        solidColorForeground.copyTo(blended(safeRoi), alpha);
     } else {
         // For images without an alpha channel, just copy them directly
         adjustedForeground.copyTo(blended(safeRoi));

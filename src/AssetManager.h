@@ -1,48 +1,44 @@
 #pragma once
 
-#include <string>
 #include <vector>
+#include <string>
 #include <map>
 #include <opencv2/opencv.hpp>
-#include "ConfigManager.h" // Include the new ConfigManager
+#include "ConfigManager.h" // Include AppConfig
 
-// Enum to differentiate between visual types
-enum VisualType {
+// Enum to differentiate between background and foreground assets
+enum AssetType {
     BACKGROUND,
     FOREGROUND
 };
 
-// A struct to hold information about each visual asset
+// Struct to represent a visual asset
 struct VisualAsset {
     std::string path;
-    VisualType type;
+    AssetType type;
     char key;
+    double scale;
 };
 
-// The AssetManager class to handle all visual asset logic
 class AssetManager {
 private:
     const AppConfig& appConfig;
     std::vector<VisualAsset> assets;
+    cv::Scalar activeForegroundColor;
 
 public:
     AssetManager(const AppConfig& config);
-
-    // Public API for the main application
     void initializeAssets();
     const std::vector<VisualAsset>& getAssets() const;
     void saveKeyMapping() const;
+    void setActiveForegroundColor(const cv::Scalar& color);
     
-    // Public method to blend a foreground onto a background with new sizing logic
-    cv::Mat blend(const cv::Mat& background, const cv::Mat& foreground);
+    cv::Mat blend(const cv::Mat& background, const cv::Mat& foreground, int screenWidth, int screenHeight, double foregroundScalePercent);
 
 private:
-    // Internal helper functions
     void scanAssets();
     bool loadKeyMapping();
     void interactiveKeyAssignment();
     void saveKeyMapping(const std::string& mappingFilePath) const;
-    
-    // Helper to display a visual and get a key press
     char displayAndGetKey(const std::string& windowName, const VisualAsset& asset);
 };

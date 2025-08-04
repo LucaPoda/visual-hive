@@ -3,12 +3,14 @@
 #include <string>
 #include <algorithm> // For std::min and std::max
 #include <iomanip>   // For std::setw and std::left
+#include <filesystem>
 
 // Platform-specific headers
 #ifdef _WIN32
 #include <windows.h>
 #else // macOS
 #include <ApplicationServices/ApplicationServices.h>
+#include <Carbon/Carbon.h> // Include this to define kVK_ANSI_S and other key codes
 #endif
 
 // For OpenCV
@@ -19,6 +21,8 @@
 // Include the new libraries
 #include "ConfigManager.h"
 #include "AssetManager.h"
+
+namespace fs = std::filesystem;
 
 // --- Display Info Struct and Functions (Copied from previous response) ---
 struct DisplayInfo {
@@ -245,8 +249,19 @@ int main() {
         std::cerr << "No background video found. Exiting.\n";
         return 1;
     }
+    
+    // Set the initial color based on the first background
+    std::string bgFilename = fs::path(activeBackgroundAsset->path).filename().string();
+    if (config.colorMappings.count(bgFilename)) {
+        assetManager.setActiveForegroundColor(config.colorMappings.at(bgFilename));
+    } else {
+        assetManager.setActiveForegroundColor(cv::Scalar(255, 255, 255)); // Default to white
+    }
 
     long long lastFrameTime = cv::getTickCount();
+    
+    // Strobe effect variables
+    bool strobeFrameToggle = false;
 
     // Loop through video frames
     cv::Mat frame;
@@ -269,11 +284,36 @@ int main() {
         cv::Mat outputFrame = scaleToFit(frame, targetDisplay.width, targetDisplay.height);
         
         // Blend the current foreground image on top if one is active
-        if (!currentForeground.empty()) {
-            outputFrame = assetManager.blend(outputFrame, currentForeground);
+        if (!currentForeground.empty() && activeForegroundAsset) {
+            outputFrame = assetManager.blend(outputFrame, currentForeground, targetDisplay.width, targetDisplay.height, activeForegroundAsset->scale);
         }
+        
+        bool strobeEffectEnabled = false;
 
-        cv::imshow(config.windowName, outputFrame);
+        // Check if the strobe key is being held down
+        #ifdef _WIN32
+        strobeEffectEnabled = (GetAsyncKeyState('S') & 0x8000) != 0;
+        #elif __APPLE__
+        // macOS alternative: Check if SPACE key is being held down
+        strobeEffectEnabled = CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, kVK_Space);
+        #endif
+
+        // Apply strobe effect if enabled
+        if (strobeEffectEnabled) {
+            if (strobeFrameToggle) {
+                // Display a black frame
+                cv::Mat blackFrame(targetDisplay.height, targetDisplay.width, CV_8UC3, cv::Scalar(255, 255, 255));
+                cv::imshow(config.windowName, blackFrame);
+            } else {
+                // Display the normal blended frame
+                cv::imshow(config.windowName, outputFrame);
+            }
+            // Toggle the boolean for the next frame to create the strobe effect
+            strobeFrameToggle = !strobeFrameToggle;
+        } else {
+            // Display the normal blended frame if strobe is not enabled
+            cv::imshow(config.windowName, outputFrame);
+        }
 
         // Calculate delay to maintain FPS
         long long currentTick = cv::getTickCount();
@@ -290,7 +330,7 @@ int main() {
         lastFrameTime = cv::getTickCount();
         
         // Handle key presses
-        if (key == 'q' || key == 27) { // 'q' or ESC
+        if (key == 27) { // 'q' or ESC
             break;
         }
         
@@ -306,6 +346,15 @@ int main() {
                         if (cap.isOpened()) {
                             activeBackgroundAsset = &asset;
                             std::cout << "Switched to background: " << activeBackgroundAsset->path << "\n";
+                            
+                            // Update the foreground color based on the new background
+                            std::string newBgFilename = fs::path(activeBackgroundAsset->path).filename().string();
+                            if (config.colorMappings.count(newBgFilename)) {
+                                assetManager.setActiveForegroundColor(config.colorMappings.at(newBgFilename));
+                            } else {
+                                assetManager.setActiveForegroundColor(cv::Scalar(255, 255, 255)); // Default to white
+                            }
+                            
                         } else {
                             std::cerr << "Error: Could not open video " << asset.path << "\n";
                         }

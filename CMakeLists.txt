@@ -27,15 +27,16 @@ endif()
 
 # Define the ConfigManager library
 add_library(ConfigManager STATIC src/ConfigManager.cpp src/ConfigManager.h)
-# ConfigManager directly uses json.hpp, so it needs the include directories.
-# Linking PUBLICLY ensures that anything linking to ConfigManager also gets the json includes.
 target_link_libraries(ConfigManager PUBLIC nlohmann_json::nlohmann_json)
+# ADD THIS LINE to allow ConfigManager to find OpenCV headers
+target_include_directories(ConfigManager PRIVATE ${OpenCV_INCLUDE_DIRS})
+
 
 # Define the AssetManager library
 add_library(AssetManager STATIC src/AssetManager.cpp src/AssetManager.h)
 target_include_directories(AssetManager PUBLIC ${OpenCV_INCLUDE_DIRS})
-# Link AssetManager to ConfigManager. This also brings in nlohmann_json includes.
-target_link_libraries(AssetManager PRIVATE ConfigManager) # Add this line
+# This was added to fix the previous json.hpp issue if AssetManager included ConfigManager.h
+target_link_libraries(AssetManager PRIVATE nlohmann_json::nlohmann_json)
 if(APPLE)
     target_link_libraries(AssetManager PRIVATE ${OpenCV_LIBRARIES} ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
 else()
@@ -46,8 +47,6 @@ endif()
 add_executable(VisualHive src/main.cpp)
 
 # Link the executable with all libraries
-# VisualHive directly uses ConfigManager and potentially json.hpp itself,
-# so it needs to link to nlohmann_json::nlohmann_json.
 target_link_libraries(VisualHive PRIVATE ConfigManager AssetManager nlohmann_json::nlohmann_json)
 if(APPLE)
     target_link_libraries(VisualHive PRIVATE ${OpenCV_LIBRARIES} ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
