@@ -9,9 +9,9 @@
 
 namespace fs = std::filesystem;
 
-// Constructor to set up file paths
-AssetManager::AssetManager(const std::string& assetsDir, const std::string& mappingFile)
-    : assetsDir(assetsDir), mappingFile(mappingFile) {
+// Constructor now takes the AppConfig object
+AssetManager::AssetManager(const AppConfig& config)
+    : appConfig(config) {
 }
 
 // Main initialization function
@@ -25,7 +25,7 @@ void AssetManager::initializeAssets() {
         // Step 3: If loading fails, prompt the user for interactive assignment
         interactiveKeyAssignment();
         // Step 4: Save the new mapping for future use
-        saveKeyMapping(mappingFile);
+        saveKeyMapping(appConfig.keyMappingFile);
     }
 }
 
@@ -36,14 +36,14 @@ const std::vector<VisualAsset>& AssetManager::getAssets() const {
 
 // Save the key mapping to disk
 void AssetManager::saveKeyMapping() const {
-    saveKeyMapping(mappingFile);
+    saveKeyMapping(appConfig.keyMappingFile);
 }
 
 // Helper to scan directories for visual assets
 void AssetManager::scanAssets() {
     assets.clear();
-    fs::path backgroundsPath = fs::path(assetsDir) / "backgrounds";
-    fs::path foregroundsPath = fs::path(assetsDir) / "foregrounds";
+    fs::path backgroundsPath = fs::path(appConfig.assetsDir) / "backgrounds";
+    fs::path foregroundsPath = fs::path(appConfig.assetsDir) / "foregrounds";
 
     // Scan backgrounds (videos)
     if (fs::exists(backgroundsPath) && fs::is_directory(backgroundsPath)) {
@@ -72,7 +72,7 @@ void AssetManager::scanAssets() {
 
 // Helper to load key mapping from a CSV file
 bool AssetManager::loadKeyMapping() {
-    std::ifstream file(mappingFile);
+    std::ifstream file(appConfig.keyMappingFile);
     if (!file.is_open()) {
         return false;
     }
@@ -166,9 +166,9 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
     cv::Mat blended = background.clone();
     cv::Mat resizedForeground;
     
-    // Define a constant width for the foreground
-    const int targetWidth = 1080;
-
+    // Define a constant width for the foreground from the config file
+    const int targetWidth = appConfig.foregroundWidth;
+    
     // Calculate new height to maintain aspect ratio
     double aspectRatio = static_cast<double>(foreground.rows) / foreground.cols;
     int newHeight = static_cast<int>(targetWidth * aspectRatio);
@@ -179,35 +179,47 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
     // Calculate position to center the foreground at the bottom of the screen
     int xOffset = (blended.cols - targetWidth) / 2;
     int yOffset = (blended.rows - newHeight) / 2;
-
-    // Handle the case where the image has an alpha channel
-    if (resizedForeground.channels() == 4) {
-        std::vector<cv::Mat> channels;
-        cv::split(resizedForeground, channels);
-        cv::Mat alpha = channels[3];
-        cv::Mat bgr[3] = { channels[0], channels[1], channels[2] };
-        cv::merge(bgr, 3, resizedForeground);
-
-        // Blending formula
-        for (int y = 0; y < resizedForeground.rows; ++y) {
-            for (int x = 0; x < resizedForeground.cols; ++x) {
-                // Check if the pixel is within the boundaries of the background
-                if (yOffset + y < blended.rows && xOffset + x < blended.cols) {
-                    double alpha_val = alpha.at<uchar>(y, x) / 255.0;
-                    cv::Vec3b& bgPixel = blended.at<cv::Vec3b>(yOffset + y, xOffset + x);
-                    cv::Vec3b fgPixel = resizedForeground.at<cv::Vec3b>(y, x);
-
-                    bgPixel[0] = static_cast<uchar>(bgPixel[0] * (1.0 - alpha_val) + fgPixel[0] * alpha_val);
-                    bgPixel[1] = static_cast<uchar>(bgPixel[1] * (1.0 - alpha_val) + fgPixel[1] * alpha_val);
-                    bgPixel[2] = static_cast<uchar>(bgPixel[2] * (1.0 - alpha_val) + fgPixel[2] * alpha_val);
-                }
-            }
-        }
-    } else { // Handle images without an alpha channel
-        cv::Mat roi = blended(cv::Rect(xOffset, yOffset, targetWidth, newHeight));
-        resizedForeground.copyTo(roi);
-    }
     
+    // Create the ROI on the background image where the foreground will be placed
+    cv::Rect roi(xOffset, yOffset, targetWidth, newHeight);
+    
+    // Ensure the ROI is completely within the background image bounds
+    cv::Rect safeRoi = roi & cv::Rect(0, 0, blended.cols, blended.rows);
+    
+    if (safeRoi.empty()) {
+        // The foreground image is completely outside the background, do nothing.
+        return blended;
+    }
+
+    // Adjust the resizedForeground to match the clamped ROI dimensions if needed
+    cv::Mat adjustedForeground = resizedForeground(cv::Rect(
+        safeRoi.x - roi.x,
+        safeRoi.y - roi.y,
+        safeRoi.width,
+        safeRoi.height
+    ));
+
+    if (adjustedForeground.empty()) {
+        return blended;
+    }
+
+    if (adjustedForeground.channels() == 4) {
+        // Split the foreground into BGR and Alpha channels
+        std::vector<cv::Mat> channels;
+        cv::split(adjustedForeground, channels);
+        cv::Mat bgr[3] = { channels[0], channels[1], channels[2] };
+        cv::Mat alpha = channels[3];
+
+        cv::Mat merged_bgr;
+        cv::merge(bgr, 3, merged_bgr);
+
+        // Copy the foreground to the ROI using the alpha channel as a mask
+        merged_bgr.copyTo(blended(safeRoi), alpha);
+    } else {
+        // For images without an alpha channel, just copy them directly
+        adjustedForeground.copyTo(blended(safeRoi));
+    }
+
     return blended;
 }
 

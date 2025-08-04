@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include <opencv2/opencv.hpp>
+#include "ConfigManager.h" // Include the new ConfigManager
 
 // Enum to differentiate between visual types
 enum VisualType {
@@ -21,12 +22,11 @@ struct VisualAsset {
 // The AssetManager class to handle all visual asset logic
 class AssetManager {
 private:
-    std::string assetsDir;
-    std::string mappingFile;
+    const AppConfig& appConfig;
     std::vector<VisualAsset> assets;
 
 public:
-    AssetManager(const std::string& assetsDir, const std::string& mappingFile);
+    AssetManager(const AppConfig& config);
 
     // Public API for the main application
     void initializeAssets();

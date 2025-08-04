@@ -16,7 +16,8 @@
 #include <opencv2/highgui/highgui.hpp>
 #include <opencv2/videoio/videoio.hpp>
 
-// Include the new AssetManager library
+// Include the new libraries
+#include "ConfigManager.h"
 #include "AssetManager.h"
 
 // --- Display Info Struct and Functions (Copied from previous response) ---
@@ -154,6 +155,10 @@ cv::Mat scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const 
 }
 
 int main() {
+    // Load application configuration from JSON file
+    ConfigManager configManager("config/config.json");
+    const AppConfig& config = configManager.getConfig();
+
     // 1. Detect Screens
     std::vector<DisplayInfo> displays = getConnectedDisplays();
 
@@ -195,8 +200,8 @@ int main() {
               << " (" << targetDisplay.width << "x" << targetDisplay.height << " pixels"
               << " at (" << targetDisplay.x << ", " << targetDisplay.y << "))\n";
 
-    // 2. Initialize Asset Manager
-    AssetManager assetManager("../assets", "key_mapping.csv");
+    // 2. Initialize Asset Manager with config data
+    AssetManager assetManager(config);
     assetManager.initializeAssets();
     const auto& assets = assetManager.getAssets();
 
@@ -205,15 +210,13 @@ int main() {
         return 1;
     }
     
-    // Create and Position OpenCV Window
-    const std::string windowName = "visual-hive Output";
+    // Create and Position OpenCV Window using window name from config
+    cv::namedWindow(config.windowName, cv::WINDOW_NORMAL); 
     
-    cv::namedWindow(windowName, cv::WINDOW_NORMAL); 
-    
-    cv::setWindowProperty(windowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FREERATIO);
+    cv::setWindowProperty(config.windowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FREERATIO);
 
-    cv::moveWindow(windowName, targetDisplay.x, targetDisplay.y);
-    cv::resizeWindow(windowName, targetDisplay.width, targetDisplay.height);
+    cv::moveWindow(config.windowName, targetDisplay.x, targetDisplay.y);
+    cv::resizeWindow(config.windowName, targetDisplay.width, targetDisplay.height);
     
     // 3. Main Loop Variables
     cv::VideoCapture cap;
@@ -270,7 +273,7 @@ int main() {
             outputFrame = assetManager.blend(outputFrame, currentForeground);
         }
 
-        cv::imshow(windowName, outputFrame);
+        cv::imshow(config.windowName, outputFrame);
 
         // Calculate delay to maintain FPS
         long long currentTick = cv::getTickCount();
