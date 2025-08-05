@@ -4,7 +4,7 @@
 #include <string>
 #include <map>
 #include <opencv2/opencv.hpp>
-#include "ConfigManager.h" // Include AppConfig
+#include "ConfigManager.h"
 
 // Enum to differentiate between background and foreground assets
 enum AssetType {
@@ -18,6 +18,7 @@ struct VisualAsset {
     AssetType type;
     char key;
     double scale;
+    cv::Mat data; // Store the asset's image/video data in memory
 };
 
 class AssetManager {
@@ -25,6 +26,9 @@ private:
     const AppConfig& appConfig;
     std::vector<VisualAsset> assets;
     cv::Scalar activeForegroundColor;
+    std::string lastForegroundPath; // Changed from cv::Mat to std::string
+    cv::Mat lastBlendedForeground;
+    std::map<char, cv::Mat> foregroundCache; // Cache for pre-processed foreground images
 
 public:
     AssetManager(const AppConfig& config);
@@ -33,7 +37,7 @@ public:
     void saveKeyMapping() const;
     void setActiveForegroundColor(const cv::Scalar& color);
     
-    cv::Mat blend(const cv::Mat& background, const cv::Mat& foreground, int screenWidth, int screenHeight, double foregroundScalePercent);
+    cv::Mat blend(const cv::Mat& background, const VisualAsset& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent);
 
 private:
     void scanAssets();
@@ -41,4 +45,5 @@ private:
     void interactiveKeyAssignment();
     void saveKeyMapping(const std::string& mappingFilePath) const;
     char displayAndGetKey(const std::string& windowName, const VisualAsset& asset);
+    void loadAssetsIntoMemory();
 };

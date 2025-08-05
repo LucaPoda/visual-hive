@@ -10,16 +10,15 @@
 namespace fs = std::filesystem;
 
 // Constructor now takes the AppConfig object
-AssetManager::AssetManager(const AppConfig& config)
-    : appConfig(config) {
+AssetManager::AssetManager(const AppConfig& config) : appConfig(config) {
     // Default color, in case no mapping is found
     activeForegroundColor = cv::Scalar(255, 255, 255); // White
 }
 
 // Main initialization function
 void AssetManager::initializeAssets() {
-    // Step 1: Scan the assets directory to find all visuals
-    scanAssets();
+    // Step 1: Scan the assets directory and load them into memory
+    loadAssetsIntoMemory();
 
     // Step 2: Try to load the key mapping from a file
     if (!loadKeyMapping()) {
@@ -46,8 +45,8 @@ void AssetManager::setActiveForegroundColor(const cv::Scalar& color) {
     activeForegroundColor = color;
 }
 
-// Helper to scan directories for visual assets
-void AssetManager::scanAssets() {
+// Helper to scan directories for visual assets and load them into memory
+void AssetManager::loadAssetsIntoMemory() {
     assets.clear();
     fs::path backgroundsPath = fs::path(appConfig.assetsDir) / "backgrounds";
     fs::path foregroundsPath = fs::path(appConfig.assetsDir) / "foregrounds";
@@ -56,16 +55,15 @@ void AssetManager::scanAssets() {
     if (fs::exists(backgroundsPath) && fs::is_directory(backgroundsPath)) {
         for (const auto& entry : fs::directory_iterator(backgroundsPath)) {
             if (entry.is_regular_file()) {
-                std::string filename = entry.path().filename().string();
                 std::string extension = entry.path().extension().string();
                 if (extension == ".mp4" || extension == ".mov") {
-                    assets.push_back({entry.path().string(), BACKGROUND, 0, 100.0});
+                    assets.push_back({entry.path().string(), BACKGROUND, 0, 100.0, cv::Mat()});
                 }
             }
         }
     }
 
-    // Scan foregrounds (images)
+    // Scan foregrounds (images) and load them into memory
     if (fs::exists(foregroundsPath) && fs::is_directory(foregroundsPath)) {
         for (const auto& entry : fs::directory_iterator(foregroundsPath)) {
             if (entry.is_regular_file()) {
@@ -76,7 +74,10 @@ void AssetManager::scanAssets() {
                     if (appConfig.foregroundScales.count(filename)) {
                         scale = appConfig.foregroundScales.at(filename);
                     }
-                    assets.push_back({entry.path().string(), FOREGROUND, 0, scale});
+                    cv::Mat image = cv::imread(entry.path().string(), cv::IMREAD_UNCHANGED);
+                    if (!image.empty()) {
+                        assets.push_back({entry.path().string(), FOREGROUND, 0, scale, image});
+                    }
                 }
             }
         }
@@ -171,65 +172,100 @@ void AssetManager::saveKeyMapping(const std::string& mappingFilePath) const {
 }
 
 // Public method to blend foreground with alpha channel onto a background
-cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground, int screenWidth, int screenHeight, double foregroundScalePercent) {
-    if (background.empty() || foreground.empty()) {
+cv::Mat AssetManager::blend(const cv::Mat& background, const VisualAsset& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent) {
+    if (background.empty() || foregroundAsset.data.empty()) {
         return background;
     }
 
     cv::Mat blended = background.clone();
-    cv::Mat resizedForeground;
-    
-    // Calculate the target width based on the screen width and scale percentage
-    int targetWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
-    
-    // Calculate new height to maintain aspect ratio
-    double aspectRatio = static_cast<double>(foreground.rows) / foreground.cols;
-    int newHeight = static_cast<int>(targetWidth * aspectRatio);
 
-    // Check if the calculated dimensions are too big for the screen
-    bool scaleAdjusted = false;
-    if (targetWidth > screenWidth || newHeight > screenHeight) {
-        std::cout << "Warning: Foreground scale is too large. Adjusting to fit screen." << std::endl;
+    // Check if the foreground asset has changed or the color has changed
+    if (lastForegroundPath.empty() || foregroundAsset.path != lastForegroundPath || lastBlendedForeground.empty()) {
+        // Pre-process the foreground image for blending
+        cv::Mat resizedForeground;
+        cv::Mat solidColorForeground;
         
-        // Recalculate dimensions to fit the screen while maintaining aspect ratio
-        if (targetWidth > screenWidth) {
-            targetWidth = screenWidth;
-            newHeight = static_cast<int>(targetWidth * aspectRatio);
+        int targetWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
+        double aspectRatio = static_cast<double>(foregroundAsset.data.rows) / foregroundAsset.data.cols;
+        int newHeight = static_cast<int>(targetWidth * aspectRatio);
+
+        // Adjust dimensions to fit the screen
+        if (targetWidth > screenWidth || newHeight > screenHeight) {
+            std::cout << "Warning: Foreground scale is too large. Adjusting to fit screen." << std::endl;
+            
+            if (targetWidth > screenWidth) {
+                targetWidth = screenWidth;
+                newHeight = static_cast<int>(targetWidth * aspectRatio);
+            }
+            if (newHeight > screenHeight) {
+                newHeight = screenHeight;
+                targetWidth = static_cast<int>(newHeight / aspectRatio);
+            }
         }
-        if (newHeight > screenHeight) {
-            newHeight = screenHeight;
-            targetWidth = static_cast<int>(newHeight / aspectRatio);
+        
+        // Resize the foreground image
+        cv::resize(foregroundAsset.data, resizedForeground, cv::Size(targetWidth, newHeight));
+
+        // Calculate position to center the foreground at the bottom of the screen
+        int xOffset = (blended.cols - targetWidth) / 2;
+        int yOffset = (blended.rows - newHeight) / 2;
+        
+        // Create the ROI on the background image where the foreground will be placed
+        cv::Rect roi(xOffset, yOffset, targetWidth, newHeight);
+        
+        // Ensure the ROI is completely within the background image bounds
+        cv::Rect safeRoi = roi & cv::Rect(0, 0, blended.cols, blended.rows);
+        
+        if (safeRoi.empty()) {
+            // The foreground image is completely outside the background, do nothing.
+            return blended;
         }
-        
-        // Calculate the maximum possible scale
-        double maxScaleWidth = (static_cast<double>(screenWidth) / foreground.cols) * 100.0;
-        double maxScaleHeight = (static_cast<double>(screenHeight) / foreground.rows) * 100.0;
-        double maxScale = std::min(maxScaleWidth, maxScaleHeight);
-        
-        std::cout << "Suggestion: To prevent this, set foreground_scale_percent to a value less than or equal to " << maxScale << "%." << std::endl;
-        scaleAdjusted = true;
-    }
 
-    // Resize the foreground image
-    cv::resize(foreground, resizedForeground, cv::Size(targetWidth, newHeight));
+        // Adjust the resizedForeground to match the clamped ROI dimensions if needed
+        cv::Mat adjustedForeground = resizedForeground(cv::Rect(
+            safeRoi.x - roi.x,
+            safeRoi.y - roi.y,
+            safeRoi.width,
+            safeRoi.height
+        ));
 
-    // Calculate position to center the foreground at the bottom of the screen
-    int xOffset = (blended.cols - targetWidth) / 2;
-    int yOffset = (blended.rows - newHeight) / 2;
+        if (adjustedForeground.empty()) {
+            return blended;
+        }
+
+        if (adjustedForeground.channels() == 4) {
+            // Split the foreground into BGR and Alpha channels
+            std::vector<cv::Mat> channels;
+            cv::split(adjustedForeground, channels);
+            cv::Mat bgr = adjustedForeground.clone();
+            cv::Mat alpha = channels[3];
+
+            // Create a new foreground image with a single, custom color
+            cv::Mat solidColorForeground(adjustedForeground.size(), CV_8UC3, activeForegroundColor);
+
+            // Copy the solid color to the ROI using the alpha channel as a mask
+            solidColorForeground.copyTo(blended(safeRoi), alpha);
+        } else {
+            // For images without an alpha channel, just copy them directly
+            adjustedForeground.copyTo(blended(safeRoi));
+        }
+
+            lastBlendedForeground = solidColorForeground;
+            lastForegroundPath = foregroundAsset.path; // Corrected line
+        }
     
-    // Create the ROI on the background image where the foreground will be placed
-    cv::Rect roi(xOffset, yOffset, targetWidth, newHeight);
+    // Calculate position to center the foreground
+    int xOffset = (blended.cols - lastBlendedForeground.cols) / 2;
+    int yOffset = (blended.rows - lastBlendedForeground.rows) / 2;
     
-    // Ensure the ROI is completely within the background image bounds
+    cv::Rect roi(xOffset, yOffset, lastBlendedForeground.cols, lastBlendedForeground.rows);
     cv::Rect safeRoi = roi & cv::Rect(0, 0, blended.cols, blended.rows);
     
     if (safeRoi.empty()) {
-        // The foreground image is completely outside the background, do nothing.
         return blended;
     }
 
-    // Adjust the resizedForeground to match the clamped ROI dimensions if needed
-    cv::Mat adjustedForeground = resizedForeground(cv::Rect(
+    cv::Mat adjustedForeground = lastBlendedForeground(cv::Rect(
         safeRoi.x - roi.x,
         safeRoi.y - roi.y,
         safeRoi.width,
@@ -240,26 +276,10 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
         return blended;
     }
 
-    if (adjustedForeground.channels() == 4) {
-        // Split the foreground into BGR and Alpha channels
-        std::vector<cv::Mat> channels;
-        cv::split(adjustedForeground, channels);
-        cv::Mat bgr = adjustedForeground.clone();
-        cv::Mat alpha = channels[3];
-
-        // Create a new foreground image with a single, custom color
-        cv::Mat solidColorForeground(adjustedForeground.size(), CV_8UC3, activeForegroundColor);
-
-        // Copy the solid color to the ROI using the alpha channel as a mask
-        solidColorForeground.copyTo(blended(safeRoi), alpha);
-    } else {
-        // For images without an alpha channel, just copy them directly
-        adjustedForeground.copyTo(blended(safeRoi));
-    }
-
+    adjustedForeground.copyTo(blended(safeRoi));
+    
     return blended;
 }
-
 
 // Helper to display a visual and get a key press
 char AssetManager::displayAndGetKey(const std::string& windowName, const VisualAsset& asset) {
@@ -276,9 +296,8 @@ char AssetManager::displayAndGetKey(const std::string& windowName, const VisualA
         }
         cap.release();
     } else { // FOREGROUND
-        cv::Mat image = cv::imread(asset.path, cv::IMREAD_UNCHANGED);
-        if (!image.empty()) {
-            cv::imshow(windowName, image);
+        if (!asset.data.empty()) {
+            cv::imshow(windowName, asset.data);
         }
     }
     return cv::waitKey(0);

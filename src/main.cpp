@@ -13,7 +13,7 @@
 #include <windows.h>
 #else // macOS
 #include <ApplicationServices/ApplicationServices.h>
-#include <Carbon/Carbon.h> 
+#include <Carbon/Carbon.h>
 #endif
 
 // For OpenCV
@@ -206,6 +206,55 @@ DisplayInfo selectTargetDisplay() {
     return targetDisplay;
 }
 
+void manualSync(ableton::Link& link) {
+    // 1. Capture the current time from Link's internal clock.
+    // This is the precise moment the user pressed the sync key.
+    auto now = std::chrono::microseconds(link.clock().micros());
+
+    // 2. Get the current beat value of the Link session at the time of the key press.
+    auto timeline = link.captureAppSessionState();
+    double currentBeat = timeline.beatAtTime(now, 4);
+
+    // 3. Calculate the phase offset. This is the fractional part of the beat.
+    // We want to correct for this offset. For example, if the beat is 3.4,
+    // the phase is 0.4, and we need to subtract that to get to a whole beat (3.0).
+    double phaseOffset = std::fmod(currentBeat, 1.0);
+    
+    // 4. Determine the new, corrected beat value.
+    // Subtracting the offset aligns the beat perfectly to the downbeat.
+    double correctedBeat = currentBeat - phaseOffset;
+
+    // 5. Use forceBeatAtTime to align the Link timeline.
+    // We force the timeline to be at 'correctedBeat' at the exact time the key was pressed ('now').
+    timeline.forceBeatAtTime(correctedBeat, now, 4);
+
+    std::cout << "Manual sync triggered." << std::endl;
+    std::cout << "Current beat was: " << currentBeat << std::endl;
+    std::cout << "Phase offset was: " << phaseOffset << std::endl;
+    std::cout << "Timeline forced to beat " << correctedBeat << " at time " << now.count() << " microseconds." << std::endl;
+}
+
+// Function to overlay a smaller image (logo) on a larger one (background frame)
+void overlayImage(const cv::Mat& background, const cv::Mat& logo, cv::Mat& output) {
+    // Make sure the background and output are the same size
+    background.copyTo(output);
+
+    // Define the region of interest for the overlay
+    cv::Rect roi(
+        (output.cols - logo.cols) / 2, // X-coordinate to center the image
+        (output.rows - logo.rows) / 2, // Y-coordinate to center the image
+        logo.cols,
+        logo.rows
+    );
+
+    // Overlay the logo onto the background
+    logo.copyTo(output(roi));
+}
+
+bool isBounceActive = false;
+bool isAnimating = false;
+std::chrono::microseconds animationStartTime;
+
 double bpm = 125;
 bool isPlaying = false;
 
@@ -215,7 +264,7 @@ int main() {
 
     // Create an Ableton Link instance with a quantum of 4 beats.
     // The quantum defines the musical grid; a value of 4 is standard for a 4/4 time signature.
-    int phraseLength = 4; 
+    int phraseLength = 4;
     ableton::Link link(phraseLength);
 
     std::cout << "Connecting to Ableton Link session..." << std::endl;
@@ -256,7 +305,6 @@ int main() {
     
     // 3. Main Loop Variables
     cv::VideoCapture cap;
-    cv::Mat currentForeground;
     
     const VisualAsset* activeBackgroundAsset = nullptr;
     const VisualAsset* activeForegroundAsset = nullptr;
@@ -273,7 +321,6 @@ int main() {
         }
         if (asset.type == FOREGROUND && activeForegroundAsset == nullptr) {
             activeForegroundAsset = &asset;
-            currentForeground = cv::imread(activeForegroundAsset->path, cv::IMREAD_UNCHANGED);
         }
     }
     
@@ -299,16 +346,22 @@ int main() {
     cv::Mat frame;
 
     // Use a try-catch block for a clean shutdown on a keyboard interrupt.
-    try {
+    //try {
         bool linkEnabled = true;
         // Assuming a 4-beat phrase
         const VisualAsset* queuedForegroundAsset = nullptr;
         std::chrono::steady_clock::time_point* nextStrobeTime = nullptr;
 
         // The main loop to continuously monitor the Link session.
+        double lastBeat = 0.0;
         while (true) {
             // todo: capire come sfruttare questo valore per capire se rekordbox è connesso
             size_t peers = link.numPeers();
+
+            auto now = std::chrono::microseconds(link.clock().micros());
+            auto timeline = link.captureAppSessionState();
+            // 2. Calculate the current beat.
+            double currentBeat = timeline.beatAtTime(now, 4);
 
             // Read next frame from the current video
             cap >> frame;
@@ -323,12 +376,41 @@ int main() {
                 }
             }
             
+            double scale = 1.0;
+            if (isBounceActive || scale != 1.0) { // if bounce is not active continue the animation until default position is reached, then stop
+                if (std::floor(currentBeat) > lastBeat) {
+                    lastBeat = std::floor(currentBeat);
+                    
+                    isAnimating = true;
+                    animationStartTime = now;
+                }
+                
+                if (isAnimating) {
+                    auto elapsed = now - animationStartTime;
+                    double beatDuration = (60.0 / timeline.tempo()) * 1000000.0; // in microseconds
+                    double progress = static_cast<double>(elapsed.count()) / beatDuration;
+                    
+                    if (progress < 1.0) {
+                        // Calculate the scaling factor for the bounce (e.g., from 1.0 to 1.2 and back)
+                        scale = 1.0 + 0.2 * std::sin((progress + 0.5) * (M_PI));
+                    } else {
+                        // Animation is over, use a scale of 1.0
+                        double scale = 1.0;
+                        isAnimating = false;
+                    }
+                } else {
+                    // No animation, use a scale of 1.0
+                    scale = 1.0;
+                    // You can print or pass this value to your visualization code.
+                }
+            }
+            
             // Scale the video frame to fit the display, maintaining aspect ratio
             cv::Mat outputFrame = scaleToFit(frame, targetDisplay.width, targetDisplay.height);
             
             // Blend the current foreground image on top if one is active
-            if (!currentForeground.empty() && activeForegroundAsset) {
-                outputFrame = assetManager.blend(outputFrame, currentForeground, targetDisplay.width, targetDisplay.height, activeForegroundAsset->scale);
+            if (activeForegroundAsset) {
+                outputFrame = assetManager.blend(outputFrame, *activeForegroundAsset, targetDisplay.width, targetDisplay.height, activeForegroundAsset->scale * scale);
             }
 
             bool strobeEffectEnabled = false;
@@ -371,7 +453,7 @@ int main() {
             } else {
                 cv::imshow(config.windowName, outputFrame);
             }
-            
+
             // Calculate delay to maintain FPS
             long long currentTick = cv::getTickCount();
             double elapsedTime_ms = (currentTick - lastFrameTime) * 1000.0 / cv::getTickFrequency();
@@ -403,6 +485,32 @@ int main() {
                         queuedForegroundAsset = nullptr;
                     }
                 }
+                else if (key == 'r') {
+                    // Show the state of the timeline before the manual sync.
+                    auto timeline_before = link.captureAppSessionState();
+                    auto now_before = std::chrono::microseconds(link.clock().micros());
+                    double beat_before = timeline_before.beatAtTime(now_before, 4);
+                    std::cout << "Before sync: Current beat is " << beat_before << std::endl;
+                    std::cout << "---" << std::endl;
+
+                    // --- Manual Sync Trigger ---
+                    // This is where you would call the function from your key press event handler.
+                    // For this example, we'll just call it directly.
+                    std::cout << "User presses sync key on the beat..." << std::endl;
+                    manualSync(link);
+                    std::cout << "---" << std::endl;
+                    
+                    // Show the state of the timeline immediately after the manual sync.
+                    // The beat value should now be a whole number.
+                    auto timeline_after = link.captureAppSessionState();
+                    auto now_after = std::chrono::microseconds(link.clock().micros());
+                    double beat_after = timeline_after.beatAtTime(now_after, 4);
+                    std::cout << "After sync: Current beat is " << beat_after << std::endl;
+                    std::cout << "---" << std::endl;
+                }
+                else if (key == 'b') {
+                    isBounceActive = !isBounceActive;
+                }
                 else {
                     for (const auto& asset : assets) {
                         if (asset.key == key) {
@@ -423,15 +531,8 @@ int main() {
                                     }
 
                                     if (queuedForegroundAsset) {
-                                        cv::Mat newForeground = cv::imread(queuedForegroundAsset->path, cv::IMREAD_UNCHANGED);
-                                        if (!newForeground.empty()) {
-                                            currentForeground = newForeground;
-                                            activeForegroundAsset = queuedForegroundAsset;
-                                            std::cout << "Switched to foreground: " << activeForegroundAsset->path << "\n";
-                                        } else {
-                                            std::cerr << "Error: Could not load foreground image " << asset.path << "\n";
-                                        }
-
+                                        activeForegroundAsset = queuedForegroundAsset;
+                                        std::cout << "Switched to foreground: " << activeForegroundAsset->path << "\n";
                                         queuedForegroundAsset = nullptr;
                                     }
                                     
@@ -454,10 +555,10 @@ int main() {
         
             std::cout << "LINK: " << peers << " | BPM: " << std::fixed << std::setprecision(2) << bpm << std::flush << "\r";
         }
-    } catch (...) {
-        // Handle any unexpected exceptions gracefully.
-        std::cout << "\nAn error occurred." << std::endl;
-    }
+    // } catch (...) {
+    //     // Handle any unexpected exceptions gracefully.
+    //     std::cout << "\nAn error occurred." << std::endl;
+    // }
 
     cap.release();
     cv::destroyAllWindows();
