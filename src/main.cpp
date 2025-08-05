@@ -4,13 +4,16 @@
 #include <algorithm> // For std::min and std::max
 #include <iomanip>   // For std::setw and std::left
 #include <filesystem>
+#include <thread>
+#include <chrono>
+#include <ableton/Link.hpp>
 
 // Platform-specific headers
 #ifdef _WIN32
 #include <windows.h>
 #else // macOS
 #include <ApplicationServices/ApplicationServices.h>
-#include <Carbon/Carbon.h> // Include this to define kVK_ANSI_S and other key codes
+#include <Carbon/Carbon.h> 
 #endif
 
 // For OpenCV
@@ -158,17 +161,12 @@ cv::Mat scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const 
     return canvas;
 }
 
-int main() {
-    // Load application configuration from JSON file
-    ConfigManager configManager("config/config.json");
-    const AppConfig& config = configManager.getConfig();
-
-    // 1. Detect Screens
+DisplayInfo selectTargetDisplay() {
     std::vector<DisplayInfo> displays = getConnectedDisplays();
 
     if (displays.empty()) {
         std::cerr << "No displays detected. Exiting.\n";
-        return 1;
+        exit(1);
     }
 
     int selectedDisplayId = -1;
@@ -180,7 +178,7 @@ int main() {
         std::cin >> selectedDisplayId;
         if (std::cin.fail()) {
             std::cerr << "Invalid input. Please enter a number. Exiting.\n";
-            return 1;
+            exit(1);
         }
     }
 
@@ -197,12 +195,46 @@ int main() {
 
     if (!found) {
         std::cerr << "Display with ID " << selectedDisplayId << " not found. Exiting.\n";
-        return 1;
+        exit(1);
     }
 
     std::cout << "Selected display: " << targetDisplay.name
               << " (" << targetDisplay.width << "x" << targetDisplay.height << " pixels"
               << " at (" << targetDisplay.x << ", " << targetDisplay.y << "))\n";
+
+
+    return targetDisplay;
+}
+
+double bpm = 125;
+bool isPlaying = false;
+
+int main() {
+
+    std::cout << "Initializing Ableton Link..." << std::endl;
+
+    // Create an Ableton Link instance with a quantum of 4 beats.
+    // The quantum defines the musical grid; a value of 4 is standard for a 4/4 time signature.
+    int phraseLength = 4; 
+    ableton::Link link(phraseLength);
+
+    std::cout << "Connecting to Ableton Link session..." << std::endl;
+    
+    // Enable the Link session to join the local network.
+    link.enable(true);
+    link.setTempoCallback([](double newTempo) {
+        // This code will be executed whenever the tempo changes
+        std::cout << "Tempo changed to: " << newTempo << " BPM\n";
+        bpm = newTempo;
+    });
+
+    // Load application configuration from JSON file
+    ConfigManager configManager("config/config.json");
+    const AppConfig& config = configManager.getConfig();
+
+    // 1. Detect Screens
+    
+    DisplayInfo targetDisplay = selectTargetDisplay();
 
     // 2. Initialize Asset Manager with config data
     AssetManager assetManager(config);
@@ -262,123 +294,178 @@ int main() {
     
     // Strobe effect variables
     bool strobeFrameToggle = false;
-
+    
     // Loop through video frames
     cv::Mat frame;
 
-    while (true) {
-        // Read next frame from the current video
-        cap >> frame;
+    // Use a try-catch block for a clean shutdown on a keyboard interrupt.
+    try {
+        bool linkEnabled = true;
+        // Assuming a 4-beat phrase
+        const VisualAsset* queuedForegroundAsset = nullptr;
+        std::chrono::steady_clock::time_point* nextStrobeTime = nullptr;
 
-        // Loop the video if it has ended
-        if (frame.empty()) {
-            cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+        // The main loop to continuously monitor the Link session.
+        while (true) {
+            // todo: capire come sfruttare questo valore per capire se rekordbox è connesso
+            size_t peers = link.numPeers();
+
+            // Read next frame from the current video
             cap >> frame;
+
+            // Loop the video if it has ended
             if (frame.empty()) {
-                std::cerr << "Error: Could not loop video. Exiting.\n";
-                break;
-            }
-        }
-        
-        // Scale the video frame to fit the display, maintaining aspect ratio
-        cv::Mat outputFrame = scaleToFit(frame, targetDisplay.width, targetDisplay.height);
-        
-        // Blend the current foreground image on top if one is active
-        if (!currentForeground.empty() && activeForegroundAsset) {
-            outputFrame = assetManager.blend(outputFrame, currentForeground, targetDisplay.width, targetDisplay.height, activeForegroundAsset->scale);
-        }
-        
-        bool strobeEffectEnabled = false;
-
-        // Check if the strobe key is being held down
-        #ifdef _WIN32
-        strobeEffectEnabled = (GetAsyncKeyState('S') & 0x8000) != 0;
-        #elif __APPLE__
-        // macOS alternative: Check if SPACE key is being held down
-        strobeEffectEnabled = CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, kVK_Space);
-        #endif
-
-        // Apply strobe effect if enabled
-        if (strobeEffectEnabled) {
-            if (strobeFrameToggle) {
-                // Display a black frame
-                cv::Mat blackFrame(targetDisplay.height, targetDisplay.width, CV_8UC3, cv::Scalar(255, 255, 255));
-                cv::imshow(config.windowName, blackFrame);
-            } else {
-                // Display the normal blended frame
-                cv::imshow(config.windowName, outputFrame);
-            }
-            // Toggle the boolean for the next frame to create the strobe effect
-            strobeFrameToggle = !strobeFrameToggle;
-        } else {
-            // Display the normal blended frame if strobe is not enabled
-            cv::imshow(config.windowName, outputFrame);
-        }
-
-        // Calculate delay to maintain FPS
-        long long currentTick = cv::getTickCount();
-        double elapsedTime_ms = (currentTick - lastFrameTime) * 1000.0 / cv::getTickFrequency();
-        double fps = cap.get(cv::CAP_PROP_FPS);
-        if (fps <= 0) fps = 30.0;
-        int delay_ms = static_cast<int>(1000.0 / fps - elapsedTime_ms);
-        
-        if (delay_ms < 1) {
-            delay_ms = 1;
-        }
-
-        char key = cv::waitKey(delay_ms);
-        lastFrameTime = cv::getTickCount();
-        
-        // Handle key presses
-        if (key == 27) { // 'q' or ESC
-            break;
-        }
-        
-        // Check for key presses to switch visuals
-        if (key > 0) {
-            for (const auto& asset : assets) {
-                if (asset.key == key) {
-                    if (asset.type == BACKGROUND) {
-                        if (activeBackgroundAsset && activeBackgroundAsset->path == asset.path) continue;
-                        
-                        cap.release();
-                        cap.open(asset.path);
-                        if (cap.isOpened()) {
-                            activeBackgroundAsset = &asset;
-                            std::cout << "Switched to background: " << activeBackgroundAsset->path << "\n";
-                            
-                            // Update the foreground color based on the new background
-                            std::string newBgFilename = fs::path(activeBackgroundAsset->path).filename().string();
-                            if (config.colorMappings.count(newBgFilename)) {
-                                assetManager.setActiveForegroundColor(config.colorMappings.at(newBgFilename));
-                            } else {
-                                assetManager.setActiveForegroundColor(cv::Scalar(255, 255, 255)); // Default to white
-                            }
-                            
-                        } else {
-                            std::cerr << "Error: Could not open video " << asset.path << "\n";
-                        }
-                    } else { // FOREGROUND
-                        if (activeForegroundAsset && activeForegroundAsset->path == asset.path) continue;
-                        
-                        cv::Mat newForeground = cv::imread(asset.path, cv::IMREAD_UNCHANGED);
-                        if (!newForeground.empty()) {
-                            currentForeground = newForeground;
-                            activeForegroundAsset = &asset;
-                            std::cout << "Switched to foreground: " << activeForegroundAsset->path << "\n";
-                        } else {
-                            std::cerr << "Error: Could not load foreground image " << asset.path << "\n";
-                        }
-                    }
-                    // Reset to avoid multiple switches for the same keypress
+                cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+                cap >> frame;
+                if (frame.empty()) {
+                    std::cerr << "Error: Could not loop video. Exiting.\n";
                     break;
                 }
             }
+            
+            // Scale the video frame to fit the display, maintaining aspect ratio
+            cv::Mat outputFrame = scaleToFit(frame, targetDisplay.width, targetDisplay.height);
+            
+            // Blend the current foreground image on top if one is active
+            if (!currentForeground.empty() && activeForegroundAsset) {
+                outputFrame = assetManager.blend(outputFrame, currentForeground, targetDisplay.width, targetDisplay.height, activeForegroundAsset->scale);
+            }
+
+            bool strobeEffectEnabled = false;
+
+            // Check if the strobe key is being held down
+            #ifdef _WIN32
+            strobeEffectEnabled = (GetAsyncKeyState(' ') & 0x8000) != 0;
+            #elif __APPLE__
+            // macOS alternative: Check if SPACE key is being held down
+            strobeEffectEnabled = CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, kVK_Space);
+            #endif
+
+            // Apply strobe effect if enabled
+            if (strobeEffectEnabled) {
+                if (!nextStrobeTime) {
+                    auto t = std::chrono::steady_clock::now();
+                    nextStrobeTime = &t;
+                }
+
+                auto now = std::chrono::steady_clock::now();
+                
+                if (now >= *nextStrobeTime) {
+                    strobeFrameToggle = !strobeFrameToggle;
+                    
+                    // Calcola la durata di un beat in millisecondi
+                    double beatDurationMs = 2000.0 / bpm;
+                    
+                    // Imposta il momento del prossimo flash, assicurando la sincronizzazione con il tempo corrente
+                    auto new_t = now + std::chrono::milliseconds(static_cast<long long>(beatDurationMs));
+                    nextStrobeTime = &new_t;
+                }
+
+                if (strobeFrameToggle) {
+                    cv::Mat whiteFrame(targetDisplay.height, targetDisplay.width, CV_8UC3, cv::Scalar(255, 255, 255)); // White screen
+                    cv::imshow(config.windowName, whiteFrame);
+                } else {
+                    cv::imshow(config.windowName, outputFrame);
+                }
+                
+            } else {
+                cv::imshow(config.windowName, outputFrame);
+            }
+            
+            // Calculate delay to maintain FPS
+            long long currentTick = cv::getTickCount();
+            double elapsedTime_ms = (currentTick - lastFrameTime) * 1000.0 / cv::getTickFrequency();
+            double fps = cap.get(cv::CAP_PROP_FPS);
+            if (fps <= 0) fps = 30.0;
+            int delay_ms = static_cast<int>(1000.0 / fps - elapsedTime_ms);
+            
+            if (delay_ms < 1) {
+                delay_ms = 1;
+            }
+
+            char key = cv::waitKey(delay_ms);
+            lastFrameTime = cv::getTickCount();
+            
+            // Handle key presses
+            if (key == 27) { // 'q' or ESC
+                break;
+            }
+
+            // Check for key presses to switch visuals
+            if (key > 0) {
+                if (key == 'l') { // Toggle Link on/off
+                    // todo: non attiva/disattiva LINK ma permette di settare manualmente i BPM o tornare a usare quelli del link
+                    linkEnabled = !linkEnabled;
+                    link.enable(linkEnabled);
+                    std::cout << "Ableton Link " << (linkEnabled ? "enabled" : "disabled") << ".\n";
+                    // Clear any pending changes when disabling link
+                    if (!linkEnabled) {
+                        queuedForegroundAsset = nullptr;
+                    }
+                }
+                else {
+                    for (const auto& asset : assets) {
+                        if (asset.key == key) {
+                            if (asset.type == BACKGROUND) {
+                                // skip if the selected background is the current one
+                                if (activeBackgroundAsset && activeBackgroundAsset->path == asset.path) continue;
+                                
+                                cap.release();
+                                cap.open(asset.path);
+                                if (cap.isOpened()) {
+                                    activeBackgroundAsset = &asset;
+                                    
+                                    std::string newBgFilename = fs::path(activeBackgroundAsset->path).filename().string();
+                                    if (config.colorMappings.count(newBgFilename)) {
+                                        assetManager.setActiveForegroundColor(config.colorMappings.at(newBgFilename));
+                                    } else {
+                                        assetManager.setActiveForegroundColor(cv::Scalar(255, 255, 255)); // Default to white
+                                    }
+
+                                    if (queuedForegroundAsset) {
+                                        cv::Mat newForeground = cv::imread(queuedForegroundAsset->path, cv::IMREAD_UNCHANGED);
+                                        if (!newForeground.empty()) {
+                                            currentForeground = newForeground;
+                                            activeForegroundAsset = queuedForegroundAsset;
+                                            std::cout << "Switched to foreground: " << activeForegroundAsset->path << "\n";
+                                        } else {
+                                            std::cerr << "Error: Could not load foreground image " << asset.path << "\n";
+                                        }
+
+                                        queuedForegroundAsset = nullptr;
+                                    }
+                                    
+                                    
+                                } else {
+                                    std::cerr << "Error: Could not open video " << asset.path << "\n";
+                                }
+                            }
+                            else { // foreground
+                                if (activeForegroundAsset && activeForegroundAsset->path == asset.path) continue;
+                                queuedForegroundAsset = &asset;
+
+                                std::cout << "Queued foreground: " << queuedForegroundAsset->path << "\n";
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        
+            std::cout << "LINK: " << peers << " | BPM: " << std::fixed << std::setprecision(2) << bpm << std::flush << "\r";
         }
+    } catch (...) {
+        // Handle any unexpected exceptions gracefully.
+        std::cout << "\nAn error occurred." << std::endl;
     }
 
     cap.release();
     cv::destroyAllWindows();
+
+    // Disable the Link session on exit.
+    link.enable(false);
+    std::cout << "\nStopping Ableton Link..." << std::endl;
+    std::cout << "Link session stopped." << std::endl;
 
     return 0;
 }

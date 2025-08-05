@@ -1,12 +1,16 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.16)
 project(VisualHive)
 
 # Set the C++ standard to C++17 to enable the filesystem library
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# --- Find Boost as a dependency of Ableton Link ---
+# The Ableton Link library requires the Boost system component.
+find_package(Boost REQUIRED COMPONENTS system)
+# --------------------------------------------------
+
 # --- Fetch the nlohmann/json library ---
-# This makes the project self-contained and avoids system-wide dependencies.
 include(FetchContent)
 FetchContent_Declare(
   json_library
@@ -15,6 +19,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json_library)
 # ----------------------------------------
+
+# --- Link to Ableton Link using the local installation ---
+# This method directly includes the AbletonLink configuration file.
+include(../link/AbletonLinkConfig.cmake)
+# -------------------------------------------------------
 
 # Find OpenCV
 find_package(OpenCV REQUIRED)
@@ -27,16 +36,16 @@ endif()
 
 # Define the ConfigManager library
 add_library(ConfigManager STATIC src/ConfigManager.cpp src/ConfigManager.h)
-target_link_libraries(ConfigManager PUBLIC nlohmann_json::nlohmann_json)
-# ADD THIS LINE to allow ConfigManager to find OpenCV headers
+# CORRECTED: Add the nlohmann/json include directory to the ConfigManager library
+target_include_directories(ConfigManager PRIVATE ${json_library_SOURCE_DIR}/include)
+# Add the OpenCV include directories to the ConfigManager library
 target_include_directories(ConfigManager PRIVATE ${OpenCV_INCLUDE_DIRS})
-
+target_link_libraries(ConfigManager PRIVATE nlohmann_json::nlohmann_json)
 
 # Define the AssetManager library
 add_library(AssetManager STATIC src/AssetManager.cpp src/AssetManager.h)
 target_include_directories(AssetManager PUBLIC ${OpenCV_INCLUDE_DIRS})
-# This was added to fix the previous json.hpp issue if AssetManager included ConfigManager.h
-target_link_libraries(AssetManager PRIVATE nlohmann_json::nlohmann_json)
+target_include_directories(AssetManager PRIVATE ${json_library_SOURCE_DIR}/include)
 if(APPLE)
     target_link_libraries(AssetManager PRIVATE ${OpenCV_LIBRARIES} ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
 else()
@@ -47,12 +56,20 @@ endif()
 add_executable(VisualHive src/main.cpp)
 
 # Link the executable with all libraries
-target_link_libraries(VisualHive PRIVATE ConfigManager AssetManager nlohmann_json::nlohmann_json)
-if(APPLE)
-    target_link_libraries(VisualHive PRIVATE ${OpenCV_LIBRARIES} ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
-else()
-    target_link_libraries(VisualHive PRIVATE ${OpenCV_LIBRARIES})
-endif()
+target_link_libraries(VisualHive PRIVATE
+    ConfigManager
+    AssetManager
+    ${OpenCV_LIBRARIES} # Corrected linking for OpenCV
+    # Link to Ableton Link using the requested target.
+    Ableton::Link
+)
 
-# The main executable needs the same include directories as the library
-target_include_directories(VisualHive PRIVATE ${OpenCV_INCLUDE_DIRS})
+# Explicitly add the include directory for the main executable
+target_include_directories(VisualHive PRIVATE
+    ${json_library_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
+)
+
+if(APPLE)
+    target_link_libraries(VisualHive PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
+endif()
