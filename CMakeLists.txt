@@ -36,9 +36,7 @@ endif()
 
 # Define the ConfigManager library
 add_library(ConfigManager STATIC src/ConfigManager.cpp src/ConfigManager.h)
-# CORRECTED: Add the nlohmann/json include directory to the ConfigManager library
 target_include_directories(ConfigManager PRIVATE ${json_library_SOURCE_DIR}/include)
-# Add the OpenCV include directories to the ConfigManager library
 target_include_directories(ConfigManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 target_link_libraries(ConfigManager PRIVATE nlohmann_json::nlohmann_json)
 
@@ -52,6 +50,18 @@ else()
     target_link_libraries(AssetManager PRIVATE ${OpenCV_LIBRARIES})
 endif()
 
+# Assuming you have a target for your AbletonLinkManager
+add_library(AbletonLinkManager src/AbletonLinkManager.cpp src/AbletonLinkManager.h)
+target_link_libraries(AbletonLinkManager PRIVATE Ableton::Link) # Assuming you have this
+target_include_directories(AbletonLinkManager PRIVATE ${json_library_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
+
+# Define the library target for your platform-specific code.
+add_library(PlatformSpecificCode STATIC src/PlatformSpecificCode.cpp src/PlatformSpecificCode.h)
+
+# Add platform-specific macOS frameworks to the library itself.
+if(APPLE)
+    target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
+endif()
 # Define the main executable
 add_executable(VisualHive src/main.cpp)
 
@@ -59,8 +69,9 @@ add_executable(VisualHive src/main.cpp)
 target_link_libraries(VisualHive PRIVATE
     ConfigManager
     AssetManager
+    AbletonLinkManager
+    PlatformSpecificCode
     ${OpenCV_LIBRARIES} # Corrected linking for OpenCV
-    # Link to Ableton Link using the requested target.
     Ableton::Link
 )
 

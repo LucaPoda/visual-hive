@@ -15,6 +15,8 @@ struct AppConfig {
     std::string windowName;
     std::map<std::string, cv::Scalar> colorMappings;
     std::map<std::string, double> foregroundScales;
+    int phraseLength;
+    double default_bpm;
 };
 
 class ConfigManager {

@@ -30,6 +30,11 @@ ConfigManager::ConfigManager(const std::string& configFilePath) {
         config.windowName = data["display"].value("window_name", "visual-hive Output");
     }
     
+    if (data.count("ableton_link")) {
+        config.phraseLength = data["ableton_link"].value("phrase_length", 4);
+        config.default_bpm = data["ableton_link"].value("default_bpm", 125.0);
+    }
+
     // Load the assets configuration
     loadAssetsConfig(config.assetsConfigFile);
 }

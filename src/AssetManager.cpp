@@ -3,273 +3,384 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <string>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
 
 namespace fs = std::filesystem;
 
+cv::Scalar toScalar(const std::string& hexColor);
+
+fs::path Background::backgroundsPath;
+fs::path Foreground::foregroundsPath;
+
+// Background conversion
+void to_json(nlohmann::json& j, const Background& b) {
+    j = nlohmann::json{
+        {"foreground_color", b.foregroundColor}, 
+        {"key", b.key}
+    };
+}
+
+void from_json(const nlohmann::json& j, Background& b) {
+    j.at("foreground_color").get_to(b.foregroundColor);
+    j.at("key").get_to(b.key);
+}
+
+// Foreground conversion
+void to_json(nlohmann::json& j, const Foreground& f) {
+    j = nlohmann::json{
+        {"scale", f.scale},
+        {"key", f.key}
+    };
+}
+
+void from_json(const nlohmann::json& j, Foreground& f) {
+    j.at("scale").get_to(f.scale);
+    j.at("key").get_to(f.key);
+}
+
+// Default conversion
+void to_json(nlohmann::json& j, const Default& d) {
+    j = nlohmann::json{{"background", d.background}, {"foreground", d.foreground}};
+}
+
+void from_json(const nlohmann::json& j, Default& d) {
+    j.at("background").get_to(d.background);
+    j.at("foreground").get_to(d.foreground);
+}
+
+// AssetsConfig conversion
+void to_json(nlohmann::json& j, const AssetsConfig& ac) {
+    j = nlohmann::json{
+        {"backgrounds", ac.backgrounds},
+        {"default", ac.default_config},
+        {"foregrounds", ac.foregrounds}
+    };
+}
+
+void from_json(const nlohmann::json& j, AssetsConfig& ac) {
+    j.at("backgrounds").get_to(ac.backgrounds);
+    j.at("default").get_to(ac.default_config);
+    j.at("foregrounds").get_to(ac.foregrounds);
+}
+
+const std::optional<cv::Scalar> Background::get_background_color() const {
+    if (type == SOLID_COLOR) {
+        return toScalar(asset_source);
+    }
+    else {
+        return std::nullopt;
+    }
+}
+
+const std::optional<std::string> Background::get_background_path() const {
+    if (type == VIDEO_LOOP) {
+        return backgroundsPath / asset_source;
+    }
+    else {
+        return std::nullopt;
+    }
+}
+
+const cv::Mat Background::get_first_frame() const {
+    if (this->type == VIDEO_LOOP) {
+        cv::VideoCapture cap(this->get_background_path().value());
+
+        if (!cap.isOpened()) {
+            std::cerr << "Error: Could not open video file\n";
+            exit(-1);
+        }
+
+        cv::Mat frame;
+        cap >> frame;
+        cap.release();
+        if (!frame.empty()) {
+            return frame;
+        }
+        else {
+            std::cerr << "Error: First frame is empty\n";
+            exit(-1);
+        }
+    }
+    else {
+        return this->get_solid_color_frame(1920, 1080, this->get_background_color().value()); // todo: define default width and height or assign width and height to the background itself
+    }
+}
+
+bool Background::open() {
+    if (this->type == VIDEO_LOOP) {
+        this->video_loop_cap.open(this->get_background_path().value());
+
+        return this->video_loop_cap.isOpened();
+    }
+    else {
+        this->solid_color_img = this->get_solid_color_frame(1920, 1080, this->get_background_color().value());
+
+        return true;
+    }
+}
+
+void Background::close() {
+    if (this->type == VIDEO_LOOP) {
+        this->video_loop_cap.release();
+    }
+}
+
+cv::Mat Background::get_next_frame() {
+    if (this->type == VIDEO_LOOP) {
+        cv::Mat frame;
+        this->video_loop_cap >> frame;
+
+        if (frame.empty()) { // loop the video when the end is reached
+            this->video_loop_cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+            this->video_loop_cap >> frame;
+            if (frame.empty()) {
+                std::cerr << "Error: Could not loop video. Exiting.\n";
+                exit(1);
+            }
+        }
+        return frame;
+    }
+    else {
+        return this->solid_color_img;
+    }
+}
+
+const cv::Mat Background::get_solid_color_frame(int width, int height, const cv::Scalar& color) const {
+    cv::Mat solidColorFrame(height, width, CV_8UC3, color);
+    return solidColorFrame;
+}
+
+double Background::get_fps() {
+    if (type == VIDEO_LOOP) {
+        return this->video_loop_cap.get(cv::CAP_PROP_FPS);
+    }
+    else {
+        return 30.0; // default to 30 FPS --- todo: this should a config param
+    }
+}
+
+const std::string Foreground::get_foreground_path() const {
+    return foregroundsPath / this->asset_source;
+}
+
+const cv::Mat Foreground::get_first_frame() const {
+    return cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+}
+
+void Foreground::open() {
+    this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+}
+
+void Foreground::close() {
+    // todo: understand how to close an image
+}
+
+cv::Mat Foreground::get_next_frame() {
+    if (this->data.empty()) {
+        this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+    }
+    return this->data;
+}   
+
 // Constructor now takes the AppConfig object
 AssetManager::AssetManager(const AppConfig& config) : appConfig(config) {
-    // Default color, in case no mapping is found
-    activeForegroundColor = cv::Scalar(255, 255, 255); // White
+   std::ifstream jsonFile(config.assetsConfigFile);
+
+    if (!jsonFile.is_open()) {
+        throw std::runtime_error("Failed to open AssetConfig file: " + config.assetsConfigFile);
+    }
+
+    try {
+        nlohmann::json data;
+        jsonFile >> data; 
+        assets = data.get<AssetsConfig>();
+    } catch (const nlohmann::json::parse_error& e) {
+        std::cerr << "JSON parse error: " << e.what() << std::endl;
+        throw;
+    }
 }
 
 // Main initialization function
 void AssetManager::initializeAssets() {
-    // Step 1: Scan the assets directory and load them into memory
     loadAssetsIntoMemory();
-
-    // Step 2: Try to load the key mapping from a file
-    if (!loadKeyMapping()) {
-        std::cout << "Key mapping file not found or invalid. Starting interactive assignment.\n";
-        // Step 3: If loading fails, prompt the user for interactive assignment
-        interactiveKeyAssignment();
-        // Step 4: Save the new mapping for future use
-        saveKeyMapping(appConfig.keyMappingFile);
-    }
 }
 
-// Return the vector of loaded assets
-const std::vector<VisualAsset>& AssetManager::getAssets() const {
-    return assets;
-}
-
-// Save the key mapping to disk
-void AssetManager::saveKeyMapping() const {
-    saveKeyMapping(appConfig.keyMappingFile);
-}
-
-// Set the active foreground color
-void AssetManager::setActiveForegroundColor(const cv::Scalar& color) {
-    activeForegroundColor = color;
-}
-
-// Helper to scan directories for visual assets and load them into memory
-void AssetManager::loadAssetsIntoMemory() {
-    assets.clear();
-    fs::path backgroundsPath = fs::path(appConfig.assetsDir) / "backgrounds";
-    fs::path foregroundsPath = fs::path(appConfig.assetsDir) / "foregrounds";
-
-    // Scan backgrounds (videos)
-    if (fs::exists(backgroundsPath) && fs::is_directory(backgroundsPath)) {
-        for (const auto& entry : fs::directory_iterator(backgroundsPath)) {
-            if (entry.is_regular_file()) {
-                std::string extension = entry.path().extension().string();
-                if (extension == ".mp4" || extension == ".mov") {
-                    assets.push_back({entry.path().string(), BACKGROUND, 0, 100.0, cv::Mat()});
-                }
-            }
-        }
+cv::Scalar toScalar(const std::string& hexColor) {
+    if (hexColor.length() != 7 || hexColor[0] != '#') {
+        throw std::invalid_argument("Invalid hex color string format.");
     }
-
-    // Scan foregrounds (images) and load them into memory
-    if (fs::exists(foregroundsPath) && fs::is_directory(foregroundsPath)) {
-        for (const auto& entry : fs::directory_iterator(foregroundsPath)) {
-            if (entry.is_regular_file()) {
-                std::string filename = entry.path().filename().string();
-                std::string extension = entry.path().extension().string();
-                if (extension == ".png" || extension == ".jpg") {
-                    double scale = 100.0;
-                    if (appConfig.foregroundScales.count(filename)) {
-                        scale = appConfig.foregroundScales.at(filename);
-                    }
-                    cv::Mat image = cv::imread(entry.path().string(), cv::IMREAD_UNCHANGED);
-                    if (!image.empty()) {
-                        assets.push_back({entry.path().string(), FOREGROUND, 0, scale, image});
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Helper to load key mapping from a CSV file
-bool AssetManager::loadKeyMapping() {
-    std::ifstream file(appConfig.keyMappingFile);
-    if (!file.is_open()) {
-        return false;
-    }
-
-    std::string line;
-    std::map<std::string, char> path_to_key;
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::string key_str, type_str, path;
-        std::getline(ss, key_str, ',');
-        std::getline(ss, type_str, ',');
-        std::getline(ss, path);
-        if (key_str.length() == 1) {
-            path_to_key[path] = key_str[0];
-        }
-    }
-    file.close();
-
-    // Assign keys to the loaded assets
-    bool allAssigned = true;
-    for (auto& asset : assets) {
-        if (path_to_key.count(asset.path)) {
-            asset.key = path_to_key[asset.path];
-        } else {
-            asset.key = 0; // Not found in mapping file
-            allAssigned = false;
-        }
-    }
-
-    return allAssigned;
-}
-
-// Helper for interactive key assignment
-void AssetManager::interactiveKeyAssignment() {
-    cv::namedWindow("Key Assignment", cv::WINDOW_NORMAL);
     
-    // Keep track of used keys to prevent duplicates
-    std::map<char, bool> usedKeys;
+    try {
+        // Extract R, G, and B substrings
+        std::string red_hex = hexColor.substr(1, 2);
+        std::string green_hex = hexColor.substr(3, 2);
+        std::string blue_hex = hexColor.substr(5, 2);
 
-    for (auto& asset : assets) {
-        std::cout << "Displaying '" << fs::path(asset.path).filename().string() << "'. "
-                  << "Press a key to assign it: ";
+        // Convert hex strings to integer values
+        int r = std::stoi(red_hex, nullptr, 16);
+        int g = std::stoi(green_hex, nullptr, 16);
+        int b = std::stoi(blue_hex, nullptr, 16);
+        
+        // OpenCV uses BGR format, so we return the values in the correct order
+        return cv::Scalar(b, g, r);
 
-        // Display the asset and get a key press
-        char key = displayAndGetKey("Key Assignment", asset);
+    } catch (const std::exception& e) {
+        throw std::invalid_argument("Error converting hex to integer: " + std::string(e.what()));
+    }
+}
 
-        if (key == -1) { // Window closed
-            std::cerr << "Window closed during key assignment. Exiting.\n";
+void AssetManager::loadAssetsIntoMemory() {
+    Background::backgroundsPath = fs::path(appConfig.assetsDir) / "backgrounds";
+    Foreground::foregroundsPath = fs::path(appConfig.assetsDir) / "foregrounds";
+    
+    for (auto& [key, value] : this->assets.get_mutable_backgrounds()) {
+        if (fs::exists(Background::backgroundsPath / key)) {
+            value.set_source(VIDEO_LOOP, key);
+        }
+        else if (key.rfind("#", 0) == 0) {
+            value.set_source(SOLID_COLOR, key);
+        }
+        else {
+            std::cout << "ERROR: Current asset is neither a color or an existing file: " << key << "\n";
             exit(1);
         }
 
-        // Check for duplicate keys
-        if (usedKeys.count(key)) {
-            std::cout << "Key '" << key << "' is already assigned. Please try again.\n";
-            asset.key = displayAndGetKey("Key Assignment", asset); // Re-prompt
-            usedKeys[key] = true;
-        } else {
-            asset.key = key;
-            usedKeys[key] = true;
+        if (value.get_key() == "") {
+            std::string pressed_key(1, displayAndGetKey("Key Assignment " + key, value.get_first_frame()));
+            value.set_key(pressed_key);
+            cv::destroyWindow("Key Assignment " + key);
         }
-
-        std::cout << "Assigned key '" << asset.key << "'.\n";
     }
 
-    cv::destroyWindow("Key Assignment");
-}
+    for (auto& [key, value] : this->assets.get_mutable_foregrounds()) {
+        value.set_source(key);
 
-// Helper to save key mapping to a CSV file
-void AssetManager::saveKeyMapping(const std::string& mappingFilePath) const {
-    std::ofstream file(mappingFilePath);
-    if (!file.is_open()) {
-        std::cerr << "Error: Could not save key mapping file.\n";
-        return;
+        if (value.get_key() == "") {
+            std::string pressed_key(1, displayAndGetKey("Key Assignment " + key, value.get_first_frame()));
+            value.set_key(pressed_key);
+            cv::destroyWindow("Key Assignment " + pressed_key);
+        }
     }
 
-    for (const auto& asset : assets) {
-        std::string typeStr = (asset.type == BACKGROUND) ? "BACKGROUND" : "FOREGROUND";
-        file << asset.key << "," << typeStr << "," << asset.path << "\n";
+    for (auto bg : this->assets.get_backgrounds()) {
+        std::cout << bg.first << ": " << bg.second.get_background_path().value_or("solid color") << " - " << bg.second.get_type() << "\n";
     }
 
-    file.close();
-    std::cout << "Key mapping saved to " << mappingFilePath << "\n";
+    nlohmann::json j;
+    to_json(j, this->assets);
+    std::ofstream o(this->appConfig.assetsConfigFile);
+
+    if (!o.is_open()) {
+        std::cerr << "Error: Could not open the file for writing." << std::endl;
+        exit(1);
+    }
+
+    o << j.dump(4);
+
+    o.close();
+
+    std::cout << "Successfully saved the updated configuration to updated_config.json" << std::endl;
+
 }
 
 // Public method to blend foreground with alpha channel onto a background
-cv::Mat AssetManager::blend(const cv::Mat& background, const VisualAsset& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent) {
-    if (background.empty() || foregroundAsset.data.empty()) {
+cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor) {
+    if (background.empty() || foregroundAsset.empty()) {
         return background;
     }
 
     cv::Mat blended = background.clone();
 
-    // Check if the foreground asset has changed or the color has changed
-    if (lastForegroundPath.empty() || foregroundAsset.path != lastForegroundPath || lastBlendedForeground.empty()) {
-        // Pre-process the foreground image for blending
-        cv::Mat resizedForeground;
-        cv::Mat solidColorForeground;
-        
-        int targetWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
-        double aspectRatio = static_cast<double>(foregroundAsset.data.rows) / foregroundAsset.data.cols;
-        int newHeight = static_cast<int>(targetWidth * aspectRatio);
-
-        // Adjust dimensions to fit the screen
-        if (targetWidth > screenWidth || newHeight > screenHeight) {
-            std::cout << "Warning: Foreground scale is too large. Adjusting to fit screen." << std::endl;
-            
-            if (targetWidth > screenWidth) {
-                targetWidth = screenWidth;
-                newHeight = static_cast<int>(targetWidth * aspectRatio);
-            }
-            if (newHeight > screenHeight) {
-                newHeight = screenHeight;
-                targetWidth = static_cast<int>(newHeight / aspectRatio);
-            }
-        }
-        
-        // Resize the foreground image
-        cv::resize(foregroundAsset.data, resizedForeground, cv::Size(targetWidth, newHeight));
-
-        // Calculate position to center the foreground at the bottom of the screen
-        int xOffset = (blended.cols - targetWidth) / 2;
-        int yOffset = (blended.rows - newHeight) / 2;
-        
-        // Create the ROI on the background image where the foreground will be placed
-        cv::Rect roi(xOffset, yOffset, targetWidth, newHeight);
-        
-        // Ensure the ROI is completely within the background image bounds
-        cv::Rect safeRoi = roi & cv::Rect(0, 0, blended.cols, blended.rows);
-        
-        if (safeRoi.empty()) {
-            // The foreground image is completely outside the background, do nothing.
-            return blended;
-        }
-
-        // Adjust the resizedForeground to match the clamped ROI dimensions if needed
-        cv::Mat adjustedForeground = resizedForeground(cv::Rect(
-            safeRoi.x - roi.x,
-            safeRoi.y - roi.y,
-            safeRoi.width,
-            safeRoi.height
-        ));
-
-        if (adjustedForeground.empty()) {
-            return blended;
-        }
-
-        if (adjustedForeground.channels() == 4) {
-            // Split the foreground into BGR and Alpha channels
-            std::vector<cv::Mat> channels;
-            cv::split(adjustedForeground, channels);
-            cv::Mat bgr = adjustedForeground.clone();
-            cv::Mat alpha = channels[3];
-
-            // Create a new foreground image with a single, custom color
-            cv::Mat solidColorForeground(adjustedForeground.size(), CV_8UC3, activeForegroundColor);
-
-            // Copy the solid color to the ROI using the alpha channel as a mask
-            solidColorForeground.copyTo(blended(safeRoi), alpha);
-        } else {
-            // For images without an alpha channel, just copy them directly
-            adjustedForeground.copyTo(blended(safeRoi));
-        }
-
-            lastBlendedForeground = solidColorForeground;
-            lastForegroundPath = foregroundAsset.path; // Corrected line
-        }
+    // Pre-process the foreground image for blending
+    cv::Mat resizedForeground;
+    cv::Mat solidColorForeground;
     
-    // Calculate position to center the foreground
-    int xOffset = (blended.cols - lastBlendedForeground.cols) / 2;
-    int yOffset = (blended.rows - lastBlendedForeground.rows) / 2;
+    int targetWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
+    double aspectRatio = static_cast<double>(foregroundAsset.rows) / foregroundAsset.cols;
+    int newHeight = static_cast<int>(targetWidth * aspectRatio);
+
+    // Adjust dimensions to fit the screen
+    if (targetWidth > screenWidth || newHeight > screenHeight) {
+        std::cout << "Warning: Foreground scale is too large. Adjusting to fit screen." << std::endl;
+        
+        if (targetWidth > screenWidth) {
+            targetWidth = screenWidth;
+            newHeight = static_cast<int>(targetWidth * aspectRatio);
+        }
+        if (newHeight > screenHeight) {
+            newHeight = screenHeight;
+            targetWidth = static_cast<int>(newHeight / aspectRatio);
+        }
+    }
     
-    cv::Rect roi(xOffset, yOffset, lastBlendedForeground.cols, lastBlendedForeground.rows);
+    // Resize the foreground image
+    cv::resize(foregroundAsset, resizedForeground, cv::Size(targetWidth, newHeight));
+
+    // Calculate position to center the foreground at the bottom of the screen
+    int xOffset = (blended.cols - targetWidth) / 2;
+    int yOffset = (blended.rows - newHeight) / 2;
+    
+    // Create the ROI on the background image where the foreground will be placed
+    cv::Rect roi(xOffset, yOffset, targetWidth, newHeight);
+    
+    // Ensure the ROI is completely within the background image bounds
     cv::Rect safeRoi = roi & cv::Rect(0, 0, blended.cols, blended.rows);
     
     if (safeRoi.empty()) {
+        // The foreground image is completely outside the background, do nothing.
         return blended;
     }
 
-    cv::Mat adjustedForeground = lastBlendedForeground(cv::Rect(
+    // Adjust the resizedForeground to match the clamped ROI dimensions if needed
+    cv::Mat adjustedForeground = resizedForeground(cv::Rect(
         safeRoi.x - roi.x,
         safeRoi.y - roi.y,
         safeRoi.width,
         safeRoi.height
+    ));
+
+    if (adjustedForeground.empty()) {
+        return blended;
+    }
+
+    if (adjustedForeground.channels() == 4) {
+        // Split the foreground into BGR and Alpha channels
+        std::vector<cv::Mat> channels;
+        cv::split(adjustedForeground, channels);
+        cv::Mat bgr = adjustedForeground.clone();
+        cv::Mat alpha = channels[3];
+
+        // Create a new foreground image with a single, custom color
+        cv::Mat solidColorForeground(adjustedForeground.size(), CV_8UC3, foregroundColor);
+
+        // Copy the solid color to the ROI using the alpha channel as a mask
+        solidColorForeground.copyTo(blended(safeRoi), alpha);
+    } else {
+        // For images without an alpha channel, just copy them directly
+        adjustedForeground.copyTo(blended(safeRoi));
+    }
+
+    lastBlendedForeground = solidColorForeground;
+    
+    // Calculate position to center the foreground
+    int xForegroundOffset = (blended.cols - lastBlendedForeground.cols) / 2;
+    int yForegroundOffset = (blended.rows - lastBlendedForeground.rows) / 2;
+    
+    cv::Rect foregroundRoi(xForegroundOffset, yForegroundOffset, lastBlendedForeground.cols, lastBlendedForeground.rows);
+    cv::Rect safeForegroundRoi = foregroundRoi & cv::Rect(0, 0, blended.cols, blended.rows);
+    
+    if (safeForegroundRoi.empty()) {
+        return blended;
+    }
+
+    adjustedForeground = lastBlendedForeground(cv::Rect(
+        safeForegroundRoi.x - foregroundRoi.x,
+        safeForegroundRoi.y - foregroundRoi.y,
+        safeForegroundRoi.width,
+        safeForegroundRoi.height
     ));
 
     if (adjustedForeground.empty()) {
@@ -281,24 +392,47 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const VisualAsset& foregr
     return blended;
 }
 
-// Helper to display a visual and get a key press
-char AssetManager::displayAndGetKey(const std::string& windowName, const VisualAsset& asset) {
-    if (asset.type == BACKGROUND) {
-        cv::VideoCapture cap(asset.path);
-        if (!cap.isOpened()) {
-            std::cerr << "Error: Could not open video file " << asset.path << "\n";
-            return -1;
-        }
-        cv::Mat frame;
-        cap >> frame;
-        if (!frame.empty()) {
-            cv::imshow(windowName, frame);
-        }
-        cap.release();
-    } else { // FOREGROUND
-        if (!asset.data.empty()) {
-            cv::imshow(windowName, asset.data);
+std::optional<Background> AssetManager::getDefaultBackground() {
+    for (auto b : this->assets.get_backgrounds()) {
+        if (b.first == this->assets.get_default_config().get_background()) {
+            return b.second;
         }
     }
+    return std::nullopt;
+}
+
+std::optional<Foreground> AssetManager::getDefaultForeground() {
+    for (auto b : this->assets.get_foregrounds()) {
+        if (b.first == this->assets.get_default_config().get_foreground()) {
+            return b.second;
+        }
+    }
+
+    return std::nullopt;
+}
+
+std::optional<Background> AssetManager::getBackroundByPressedKey(char pressed_key) {
+    for (auto b : this->assets.get_backgrounds()) {
+        std::string key(1, pressed_key);
+        if (b.second.get_key() == key) {
+            return assets.get_backgrounds().at(b.first);
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<Foreground> AssetManager::getForegroundByPressedKey(char pressed_key) {
+    for (auto b : this->assets.get_foregrounds()) {
+        std::string key(1, pressed_key);
+        if (b.second.get_key() == key) {
+            return b.second;
+        }
+    }
+    return std::nullopt;
+}
+
+// Helper to display a visual and get a key press
+char AssetManager::displayAndGetKey(const std::string& windowName, const cv::Mat asset) {
+    cv::imshow(windowName, asset);
     return cv::waitKey(0);
 }
