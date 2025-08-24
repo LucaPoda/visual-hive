@@ -196,12 +196,15 @@ public:
     
     
 
-    std::optional<Background> getDefaultBackground();
-    std::optional<Foreground> getDefaultForeground();
+    std::shared_ptr<Background> getDefaultBackground();
+    std::shared_ptr<Foreground> getDefaultForeground();
 
-    std::optional<Background> getBackroundByPressedKey(char key);
-    std::optional<Foreground> getForegroundByPressedKey(char key);
+    std::shared_ptr<Background> getBackroundByPressedKey(char key);
+    std::shared_ptr<Foreground> getForegroundByPressedKey(char key);
 
+    std::shared_ptr<Background> getRandomBackground();
+    std::shared_ptr<Foreground> getRandomForeground();
+    
 private:
     char displayAndGetKey(const std::string& windowName, const cv::Mat asset);
     void loadAssetsIntoMemory();

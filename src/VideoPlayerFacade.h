@@ -7,20 +7,23 @@
 #include <mutex>
 #include <condition_variable>
 #include <opencv2/opencv.hpp>
+#include <memory>
+#include <optional>
+#include "EventQueue.h" // Include the new header
 #include "PlatformSpecificCode.h"
 
-// Forward declare the Objective-C classes.
-// Note: This file is a C++ header, so these should be wrapped in an Obj-C-specific context
-// to prevent C++ compilers from seeing them. A better approach is to use a separate .h file
-// but for now, let's make this one work by wrapping in an #ifdef __OBJC__ block.
+// Forward declare Objective-C types
 #ifdef __OBJC__
 @class MTKView;
 @class MetalViewDelegate;
 #else
-// C++ compatible forward declarations for Objective-C types
 typedef struct MTKView MTKView;
 typedef struct MetalViewDelegate MetalViewDelegate;
 #endif
+
+// Forward declare the Asset classes to allow shared pointers
+class Background;
+class Foreground;
 
 class VideoPlayerFacade {
 public:
@@ -30,21 +33,53 @@ public:
     void pushFrame(const cv::Mat& frame);
     void stopVisualization();
     void runAppKitLoop(const DisplayInfo& displayInfo);
-
     bool isRunning();
+    
+    // Getter for the event queue
+    EventQueue* getEventQueue();
 
-    // Move FrameQueue to the public section
+    // Getters and setters for thread-safe access to assets
+    std::shared_ptr<Background> getActiveBackground();
+    void setActiveBackground(std::shared_ptr<Background> bg);
+
+    std::shared_ptr<Foreground> getActiveForeground();
+    void setActiveForeground(std::shared_ptr<Foreground> fg);
+
+    // Methods for cueing assets
+    std::optional<std::shared_ptr<Background>> getQueuedBackground();
+    void setQueuedBackground(std::shared_ptr<Background> bg);
+    void clearQueuedBackground();
+
+    std::optional<std::shared_ptr<Foreground>> getQueuedForeground();
+    void setQueuedForeground(std::shared_ptr<Foreground> fg);
+    void clearQueuedForeground();
+    
+    // Atomic flags for thread-safe state
+    std::atomic<bool> isStrobeActive{false};
+    std::atomic<bool> isBounceActive{false};
+    std::atomic<bool> isCueActive{false};
+    
     class FrameQueue;
+    FrameQueue* _frameQueue;
 
 private:
-    FrameQueue* _frameQueue;
     std::atomic<bool> _isRunning{true};
+    DisplayInfo _displayInfo;
 
-    // Use Objective-C pointer types here, as this is an Objective-C++ class.
-    // The previous errors were from a C++ file trying to parse these.
-    // Assuming your main.cpp is a C++ file, the fix is to use an opaque pointer
-    // and handle the Objective-C types only in the .mm file.
-    // Let's use the struct-based approach to fix this cleanly.
+    // Thread-safe event queue
+    EventQueue* _eventQueue;
+    
+    // Shared pointers for assets
+    std::shared_ptr<Background> _activeBackgroundAsset;
+    std::shared_ptr<Foreground> _activeForegroundAsset;
+    
+    // Optional shared pointers for queued assets
+    std::optional<std::shared_ptr<Background>> _queuedBackgroundAsset;
+    std::optional<std::shared_ptr<Foreground>> _queuedForegroundAsset;
+    
+    std::mutex _assetMutex;
+
+    // Use a struct to hold Objective-C members
     struct ObjcMembers;
     ObjcMembers* _objcMembers;
 };

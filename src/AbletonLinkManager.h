@@ -6,4 +6,4 @@
 extern int PHRASE_LENGTH;
 extern int BPM;
 
-ableton::Link * loadAbletonLink(const AppConfig & config);
+std::shared_ptr<ableton::Link> loadAbletonLink(const AppConfig& config);

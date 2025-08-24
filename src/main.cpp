@@ -68,7 +68,7 @@ cv::Mat scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const 
     return canvas;
 }
 
-void manualSync(ableton::Link * link) {
+void manualSync(std::shared_ptr<ableton::Link> link) {
     auto now = std::chrono::microseconds(link->clock().micros());
     auto timeline = link->captureAppSessionState();
     double currentBeat = timeline.beatAtTime(now, 4);
@@ -82,78 +82,190 @@ void manualSync(ableton::Link * link) {
     std::cout << "Timeline forced to beat " << correctedBeat << " at time " << now.count() << " microseconds." << std::endl;
 }
 
-bool isBounceActive = false;
+bool isNearMultiple(double value, double displacement, const double divisor, double tolerance) {
+    // We get the remainder of the value divided by the divisor.
+    double mod = std::fmod(value, divisor);
+    double remainder = mod - displacement;
+    // std::cout << "BEAT " << mod << " - " << displacement << " = " << remainder << " OF " << divisor << std::endl;
+    // We check if the remainder is close to zero or the divisor.
+    // The second condition handles cases where the remainder is slightly less than the divisor,
+    // for example 31.999999999999996 is near 32.
+    return std::abs(remainder) < tolerance || std::abs(divisor - remainder) < tolerance;
+}
+
 bool isAnimating = false;
 std::chrono::microseconds animationStartTime;
 
 bool isPlaying = false;
 
 void videoProcessingThread(std::shared_ptr<VideoPlayerFacade> player, const DisplayInfo targetDisplay) {
+    // Check if the player is validå
+    if (!player) {
+        std::cerr << "Player pointer is null. Exiting processing thread." << std::endl;
+        return;
+    }
+
     // Load application configuration from JSON file
     ConfigManager configManager("config/config.json");
     const AppConfig& config = configManager.getConfig();
 
-    ableton::Link * link = loadAbletonLink(config);
+    std::shared_ptr<ableton::Link> link = loadAbletonLink(config);
 
     // 2. Initialize Asset Manager with config data
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
-    std::optional<Background> defaultBackgroundAsset = assetManager.getDefaultBackground();
-    std::optional<Foreground> defaultForegroundAsset = assetManager.getDefaultForeground();
-    std::optional<Foreground> queuedForegroundAsset = std::nullopt;
+    std::shared_ptr<Background> activeBackgroundAsset = assetManager.getDefaultBackground();
+    std::shared_ptr<Foreground> activeForegroundAsset = assetManager.getDefaultForeground();
 
-    Background activeBackgroundAsset;
-    Foreground activeForegroundAsset;
-    
-    if (defaultBackgroundAsset.has_value()) {
-        activeBackgroundAsset = defaultBackgroundAsset.value();
-    } 
-    else {
+    if (!activeBackgroundAsset) {
         std::cerr << "No default background video found. Exiting.\n";
         return;
     }
-
-    if (defaultForegroundAsset.has_value()) {
-        activeForegroundAsset = defaultForegroundAsset.value();
-    } 
-    else {
+    if (!activeForegroundAsset) {
         std::cerr << "No default foreground video found. Exiting.\n";
         return;
     }
+    
+    // Store assets in the facade for safe access
+    player->setActiveBackground(activeBackgroundAsset);
+    player->setActiveForeground(activeForegroundAsset);
 
-    activeBackgroundAsset.open();
-    activeForegroundAsset.open();
-    
+    activeBackgroundAsset->open();
+    activeForegroundAsset->open();
+
     bool strobeFrameToggle = false;
-    
-    bool linkEnabled = true;
-    // Assuming a 4-beat phrase
     std::chrono::steady_clock::time_point* nextStrobeTime = nullptr;
-    std::chrono::microseconds _lastVideoFrameTime;
-    // The main loop to continuously monitor the Link session.
+
+    long long lastFrameTime = cv::getTickCount();
+    
+    // Define the beat interval for CUE changes
+    const double cueBeatInterval = 32.0;
+    double lastCueBeat = 0.0;
+    double displacement = 0.0;
+
+    // The main loop to continuously monitor the Link session and process events.
     double lastBeat = 0.0;
     while (player->isRunning()) {
         auto now = std::chrono::microseconds(link->clock().micros());
-        double fps = activeBackgroundAsset.get_fps();
-        if (fps <= 0) {
-            fps = 30.0; // Default to 30 FPS if not available
-        }
-        std::chrono::microseconds frameDuration(static_cast<long long>(1000000.0 / fps));
-        if (now < _lastVideoFrameTime + frameDuration) {
-            continue;
-        }
-        
-        _lastVideoFrameTime = now;
-
-        size_t peers = link->numPeers();
         auto timeline = link->captureAppSessionState();
-        double currentBeat = timeline.beatAtTime(now, 4);
+        double currentBeat = timeline.beatAtTime(now, cueBeatInterval);
+
+        // --- Process Events ---
+        Event event;
+        while (player->getEventQueue()->pop(event)) {
+            // Handle key down/up events
+            if (event.type == AppEventType::Keyboard) {
+                switch (event.keyCode) {
+                    case 'b': // Bounce
+                        if (event.isKeyDown) { 
+                            player->isBounceActive.store(!player->isBounceActive.load()); 
+                            std::cout << "BOUNCE mode is now: " << (player->isBounceActive.load() ? "ON" : "OFF") << std::endl;
+                        }
+                        break;
+                    case ' ': // Strobe
+                        player->isStrobeActive.store(event.isKeyDown);
+                        break;
+                    case 'c': // CUE
+                        if (event.isKeyDown) {
+                            player->isCueActive.store(!player->isCueActive.load());
+                            std::cout << "CUE mode is now: " << (player->isCueActive.load() ? "ON" : "OFF") << std::endl;
+                        }
+                        break;
+                    case 'r':
+                        std::cout << "Before sync: Current beat is " << currentBeat << std::endl;
+                        std::cout << "---" << std::endl;
+                        std::cout << "User presses sync key on the beat..." << std::endl;
+                        manualSync(link);
+                        displacement = std::fmod(currentBeat, cueBeatInterval);
+                        
+                        std::cout << "---" << std::endl;
+                        
+                        auto timeline_after = link->captureAppSessionState();
+                        auto now_after = std::chrono::microseconds(link->clock().micros());
+                        double beat_after = timeline_after.beatAtTime(now_after, 4);
+                        std::cout << "After sync: Current beat is " << beat_after << std::endl;
+                        std::cout << "---" << std::endl;
+                        // Other key bindings will go here
+                }
+                
+                // --- Background/Foreground Swapping Logic ---
+                std::shared_ptr<Background> newBg = assetManager.getBackroundByPressedKey(event.keyCode);
+                std::shared_ptr<Foreground> newFg = assetManager.getForegroundByPressedKey(event.keyCode);
+
+                if (newBg && event.isKeyDown) {
+                    if (player->isCueActive.load()) {
+                        player->setQueuedBackground(newBg);
+                        std::cout << "Queued background change." << std::endl;
+                    } else {
+                        // Instant change
+                        activeBackgroundAsset->close();
+                        activeBackgroundAsset = newBg;
+                        activeBackgroundAsset->open();
+                        player->setActiveBackground(activeBackgroundAsset);
+                    }
+                }
+                
+                if (newFg) {
+                    if (player->isCueActive.load()) {
+                        player->setQueuedForeground(newFg);
+                        std::cout << "Queued foreground change." << std::endl;
+                    } else {
+                        // Instant change
+                        activeForegroundAsset->close();
+                        activeForegroundAsset = newFg;
+                        activeForegroundAsset->open();
+                        player->setActiveForeground(activeForegroundAsset);
+                    }
+                }
+            }
+        }
+
+        // Cue logic
+        if (player->isCueActive.load()) {
+            if (isNearMultiple(currentBeat, displacement, cueBeatInterval, 0.1)) {
+                // Time to apply ther cue change
+                std::shared_ptr<Background> bg = nullptr;
+                if (player->getQueuedBackground().has_value()) {
+                    bg = player->getQueuedBackground().value();
+                }
+                else {
+                    bg = assetManager.getRandomBackground();
+                }
+                activeBackgroundAsset->close();
+                activeBackgroundAsset = bg;
+                activeBackgroundAsset->open();
+
+                player->setActiveBackground(activeBackgroundAsset);
+                player->clearQueuedBackground();
+                std::cout << "Applying queued background change." << std::endl;
+
+                std::shared_ptr<Foreground> fg = nullptr;
+                if (player->getQueuedForeground().has_value()) {
+                    fg = player->getQueuedForeground().value();
+                }
+                else{
+                    fg = assetManager.getRandomForeground();
+                } 
+                activeForegroundAsset->close();
+                activeForegroundAsset = fg;
+                activeForegroundAsset->open();
+                player->setActiveForeground(activeForegroundAsset);
+                player->clearQueuedForeground();
+                std::cout << "Applying queued foreground change." << std::endl;
+            }
+            else {
+                // std::cout << "BEAT " << currentInterval << " OF " << cueBeatInterval << std::endl;
+            }
+        }
+
+        // --- Frame Generation ---
+        cv::Mat frame = activeBackgroundAsset->get_next_frame();
         
-        cv::Mat frame = activeBackgroundAsset.get_next_frame();
+        // Apply effects
         
         double scale = 1.0;
-        if (isBounceActive || scale != 1.0) {
+        if (player->isBounceActive.load() || scale != 1.0) {
             if (std::floor(currentBeat) > lastBeat) {
                 lastBeat = std::floor(currentBeat);
                 isAnimating = true;
@@ -167,7 +279,7 @@ void videoProcessingThread(std::shared_ptr<VideoPlayerFacade> player, const Disp
                 
                 if (progress < 1.0) {
                     // Calculate the scaling factor for the bounce (e.g., from 1.0 to 1.2 and back)
-                    scale = 1.0 + 0.2 * std::sin((progress + 0.5) * (M_PI));
+                    scale = 1.0 + 0.1 * std::sin((progress + 0.5) * (M_PI));
                 } else {
                     // Animation is over, use a scale of 1.0
                     double scale = 1.0;
@@ -178,12 +290,11 @@ void videoProcessingThread(std::shared_ptr<VideoPlayerFacade> player, const Disp
                 scale = 1.0;
             }
         }
-        
-        cv::Mat outputFrame = scaleToFit(frame, targetDisplay.width, targetDisplay.height);
-        outputFrame = assetManager.blend(outputFrame, activeForegroundAsset.get_next_frame(), targetDisplay.width, targetDisplay.height, activeForegroundAsset.get_scale() * scale, activeBackgroundAsset.get_foreground_color());
 
-        bool strobeEffectEnabled = isSpaceDown();
-        if (strobeEffectEnabled) {
+        cv::Mat outputFrame = scaleToFit(frame, targetDisplay.width, targetDisplay.height); // Placeholder resolution
+        outputFrame = assetManager.blend(outputFrame, activeForegroundAsset->get_next_frame(), targetDisplay.width, targetDisplay.height, activeForegroundAsset->get_scale()* scale, activeBackgroundAsset->get_foreground_color());
+        
+        if (player->isStrobeActive.load()) {
             if (!nextStrobeTime) {
                 auto t = std::chrono::steady_clock::now();
                 nextStrobeTime = &t;
@@ -193,7 +304,7 @@ void videoProcessingThread(std::shared_ptr<VideoPlayerFacade> player, const Disp
             
             if (now >= *nextStrobeTime) {
                 strobeFrameToggle = !strobeFrameToggle;
-                double beatDurationMs = 2000.0 / timeline.tempo();
+                double beatDurationMs = 6000.0 / timeline.tempo();
                 auto new_t = now + std::chrono::milliseconds(static_cast<long long>(beatDurationMs));
                 nextStrobeTime = &new_t;
             }
@@ -207,85 +318,26 @@ void videoProcessingThread(std::shared_ptr<VideoPlayerFacade> player, const Disp
         } else {
             player->pushFrame(outputFrame);
         }
-
-        long long currentTick = cv::getTickCount();
-
-        // char key = cv::waitKey(delay_ms);
-        char key = 0;        
-        if (key == 27) {
-            break;
-        }
         
-        if (key > 0) {
-            if (key == 'l') {
-                linkEnabled = !linkEnabled;
-                link->enable(linkEnabled);
-                std::cout << "Ableton Link " << (linkEnabled ? "enabled" : "disabled") << ".\n";
-                if (!linkEnabled) {
-                    queuedForegroundAsset = std::nullopt;
-                }
-            }
-            else if (key == 'r') {
-                auto timeline_before = link->captureAppSessionState();
-                auto now_before = std::chrono::microseconds(link->clock().micros());
-                double beat_before = timeline_before.beatAtTime(now_before, 4);
-                std::cout << "Before sync: Current beat is " << beat_before << std::endl;
-                std::cout << "---" << std::endl;
-                std::cout << "User presses sync key on the beat..." << std::endl;
-                manualSync(link);
-                std::cout << "---" << std::endl;
-                
-                auto timeline_after = link->captureAppSessionState();
-                auto now_after = std::chrono::microseconds(link->clock().micros());
-                double beat_after = timeline_after.beatAtTime(now_after, 4);
-                std::cout << "After sync: Current beat is " << beat_after << std::endl;
-                std::cout << "---" << std::endl;
-            }
-            else if (key == 'b') {
-                isBounceActive = !isBounceActive;
-            }
-            else {
-                std::optional<Background> bg = assetManager.getBackroundByPressedKey(key); 
-                std::optional<Foreground> fg = assetManager.getForegroundByPressedKey(key); 
-
-                if (bg.has_value()) {
-                    if (activeBackgroundAsset.get_source() == bg.value().get_source()) {
-                        continue;
-                    }
-                    
-                    activeBackgroundAsset.close();
-
-                    if (bg->open()) {
-                        activeBackgroundAsset = bg.value();
-
-                        if (queuedForegroundAsset.has_value()) {
-                            activeForegroundAsset = queuedForegroundAsset.value();
-                            std::cout << "Switched to foreground: " << activeForegroundAsset.get_foreground_path() << "\n";
-                        }
-                    } else {
-                        std::cerr << "Error: Could not open video " << bg.value().get_background_path().value() << "\n";
-                    }
-                }
-                else if (fg.has_value()) {
-                    if (activeForegroundAsset.get_foreground_path() == fg.value().get_foreground_path()) {
-                        continue;
-                    }
-                    queuedForegroundAsset = fg;
-                    std::cout << "Queued foreground: " << queuedForegroundAsset->get_foreground_path() << "\n";
-                }
-            }
+        // Prevent the thread from running too fast
+        double fps = activeBackgroundAsset->get_fps();
+        if (fps <= 0) fps = 30.0;
+        
+        long long currentTick = cv::getTickCount();
+        double elapsedTime_ms = (currentTick - lastFrameTime) * 1000.0 / cv::getTickFrequency();
+        int delay_ms = static_cast<int>(1000.0 / fps - elapsedTime_ms);
+        if (delay_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));
         }
-    
+        lastFrameTime = cv::getTickCount();
+
+        // Print Link info
         double BPM = timeline.tempo();
-        std::cout << "LINK: " << peers << " | BPM: " << std::fixed << std::setprecision(2) << BPM << std::flush << "\r";
+        std::cout << "LINK: " << link->numPeers() << " | BPM: " << std::fixed << std::setprecision(2) << BPM << std::flush << "\r";
     }
 
-    cv::destroyAllWindows();
     link->enable(false);
-    delete link;
-    link = nullptr;
     std::cout << "\nStopping Ableton Link..." << std::endl;
-    std::cout << "Link session stopped." << std::endl;
 }
 
 int main(int argc, char *argv[]) {

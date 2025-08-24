@@ -4,6 +4,7 @@
 #include <sstream>
 #include <filesystem>
 #include <string>
+#include <random>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
@@ -392,43 +393,89 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
     return blended;
 }
 
-std::optional<Background> AssetManager::getDefaultBackground() {
+std::shared_ptr<Background> AssetManager::getDefaultBackground() {
     for (auto b : this->assets.get_backgrounds()) {
         if (b.first == this->assets.get_default_config().get_background()) {
-            return b.second;
+            return std::make_shared<Background>(b.second);
         }
     }
-    return std::nullopt;
+    return nullptr;
 }
 
-std::optional<Foreground> AssetManager::getDefaultForeground() {
+std::shared_ptr<Foreground> AssetManager::getDefaultForeground() {
     for (auto b : this->assets.get_foregrounds()) {
         if (b.first == this->assets.get_default_config().get_foreground()) {
-            return b.second;
+            return std::make_shared<Foreground>(b.second);
         }
     }
 
-    return std::nullopt;
+    return nullptr;
 }
 
-std::optional<Background> AssetManager::getBackroundByPressedKey(char pressed_key) {
+std::shared_ptr<Background> AssetManager::getBackroundByPressedKey(char pressed_key) {
     for (auto b : this->assets.get_backgrounds()) {
         std::string key(1, pressed_key);
         if (b.second.get_key() == key) {
-            return assets.get_backgrounds().at(b.first);
+            return std::make_shared<Background>(assets.get_backgrounds().at(b.first));
         }
     }
-    return std::nullopt;
+    return nullptr;
 }
 
-std::optional<Foreground> AssetManager::getForegroundByPressedKey(char pressed_key) {
+std::shared_ptr<Foreground> AssetManager::getForegroundByPressedKey(char pressed_key) {
     for (auto b : this->assets.get_foregrounds()) {
         std::string key(1, pressed_key);
         if (b.second.get_key() == key) {
-            return b.second;
+            return std::make_shared<Foreground>(b.second);
         }
     }
-    return std::nullopt;
+    return nullptr;
+}
+
+std::shared_ptr<Background> AssetManager::getRandomBackground() {
+    const auto& backgrounds = this->assets.get_backgrounds();
+    if (backgrounds.empty()) {
+        return nullptr;
+    }
+
+    // Use a modern random number generator seeded with a high-resolution clock.
+    unsigned seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::mt19937 gen(seed);
+    std::uniform_int_distribution<> distrib(0, backgrounds.size() - 1);
+
+    // Get a random index.
+    long randomIndex = distrib(gen);
+
+    // Use a std::map iterator to find the element at the random index.
+    auto it = backgrounds.begin();
+    std::advance(it, randomIndex);
+    
+    return std::make_shared<Background>(it->second);
+}
+
+/**
+ * @brief Returns a shared pointer to a random foreground asset.
+ * @return A shared pointer to a random Foreground object, or nullptr if no foregrounds are available.
+ */
+std::shared_ptr<Foreground> AssetManager::getRandomForeground() {
+    const auto& foregrounds = this->assets.get_foregrounds();
+    if (foregrounds.empty()) {
+        return nullptr;
+    }
+
+    // Use a modern random number generator seeded with a high-resolution clock.
+    unsigned seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    std::mt19937 gen(seed);
+    std::uniform_int_distribution<> distrib(0, foregrounds.size() - 1);
+
+    // Get a random index.
+    long randomIndex = distrib(gen);
+
+    // Use a std::map iterator to find the element at the random index.
+    auto it = foregrounds.begin();
+    std::advance(it, randomIndex);
+
+    return std::make_shared<Foreground>(it->second);
 }
 
 // Helper to display a visual and get a key press

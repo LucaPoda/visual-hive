@@ -1,12 +1,14 @@
-//
 // VideoPlayerFacade.mm
-// The implementation of the multi-threaded video player library.
-//
+// This file contains the full implementation of the Metal view delegate for rendering
+// and the main AppKit loop.
 
 #include "VideoPlayerFacade.h"
-#include "VideoPlayerFacade_objc.h" // Include the new header
-#include "PlatformSpecificCode.h"
+#include "AssetManager.h"
 #include <iostream>
+#include <thread>
+#include <memory>
+#include <optional>
+#include "EventQueue.h"
 
 // Include necessary Apple frameworks for Metal and the UI
 #import <Metal/Metal.h>
@@ -48,22 +50,81 @@ private:
 // Define the struct for Objective-C members here, so it is a complete type
 // before you use it in the VideoPlayerFacade constructor.
 struct VideoPlayerFacade::ObjcMembers {
-    __strong MetalViewDelegate* delegate;
+    __strong id<NSWindowDelegate> windowDelegate;
     __strong MTKView* mtkView;
+    __strong MetalViewDelegate* mtkDelegate;
+    __strong NSWindow* window;
+    __strong id keyboardEventMonitor;
 };
 
 VideoPlayerFacade::VideoPlayerFacade() :
     _frameQueue(new VideoPlayerFacade::FrameQueue()),
-    _objcMembers(new VideoPlayerFacade::ObjcMembers()) {
+    _objcMembers(new VideoPlayerFacade::ObjcMembers()),
+    _eventQueue(new EventQueue()) {
 }
 
 VideoPlayerFacade::~VideoPlayerFacade() {
     delete _frameQueue;
     delete _objcMembers;
+    delete _eventQueue;
 }
 
 bool VideoPlayerFacade::isRunning() {
     return _isRunning.load();
+}
+
+EventQueue* VideoPlayerFacade::getEventQueue() {
+    return _eventQueue;
+}
+
+std::shared_ptr<Background> VideoPlayerFacade::getActiveBackground() {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    return _activeBackgroundAsset;
+}
+
+void VideoPlayerFacade::setActiveBackground(std::shared_ptr<Background> bg) {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    _activeBackgroundAsset = bg;
+}
+
+std::shared_ptr<Foreground> VideoPlayerFacade::getActiveForeground() {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    return _activeForegroundAsset;
+}
+
+void VideoPlayerFacade::setActiveForeground(std::shared_ptr<Foreground> fg) {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    _activeForegroundAsset = fg;
+}
+
+std::optional<std::shared_ptr<Background>> VideoPlayerFacade::getQueuedBackground() {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    return _queuedBackgroundAsset;
+}
+
+void VideoPlayerFacade::setQueuedBackground(std::shared_ptr<Background> bg) {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    _queuedBackgroundAsset = bg;
+}
+
+void VideoPlayerFacade::clearQueuedBackground() {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    _queuedBackgroundAsset.reset();
+}
+
+std::optional<std::shared_ptr<Foreground>> VideoPlayerFacade::getQueuedForeground() {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    return _queuedForegroundAsset;
+}
+
+void VideoPlayerFacade::setQueuedForeground(std::shared_ptr<Foreground> fg) {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    _queuedForegroundAsset = fg;
+}
+
+void VideoPlayerFacade::clearQueuedForeground() {
+    std::lock_guard<std::mutex> lock(_assetMutex);
+    _queuedForegroundAsset.reset();
 }
 
 // --- Metal Shaders (written in Metal Shading Language) ---
@@ -87,6 +148,7 @@ vertex TextureVertexOut vertex_shader(
 {
     TextureVertexOut out;
     out.position = float4(vertices[vertexID].position, 0.0, 1.0);
+    // Removed the vertical flip, as the user requested.
     out.texCoords = vertices[vertexID].texCoords;
     return out;
 }
@@ -179,9 +241,7 @@ void VideoRenderer::updateTextureWithFrame(const cv::Mat& frame) {
         return;
     }
 
-    // Flip the frame vertically for Metal coordinate system
     cv::Mat flippedFrame = bgraFrame;
-
     if (!_videoTexture || _videoTexture.width != flippedFrame.cols || _videoTexture.height != flippedFrame.rows) {
         // ARC automatically handles the release of the old texture
         MTLTextureDescriptor* textureDescriptor = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
@@ -230,22 +290,18 @@ void VideoRenderer::render(MTKView* view) {
 }
 
 // --- Objective-C++ View and Delegate for AppKit and MetalKit Integration ---
-@interface MetalViewDelegate : NSObject <MTKViewDelegate, NSWindowDelegate> {
-    VideoPlayerFacade::FrameQueue* _frameQueue;
-}
+@interface MetalViewDelegate : NSObject <MTKViewDelegate>
+@property (nonatomic, assign) VideoPlayerFacade* player;
 @property (nonatomic, assign) VideoRenderer* renderer; // Use assign for C++ objects
-@property (nonatomic, assign) std::atomic<bool>* isRunning;
-- (void)setFrameQueue:(VideoPlayerFacade::FrameQueue*)frameQueue;
+@property (nonatomic, assign) VideoPlayerFacade::FrameQueue* frameQueue;
 @end
-@implementation MetalViewDelegate
-@synthesize renderer = _renderer;
 
-- (void)setFrameQueue:(VideoPlayerFacade::FrameQueue*)frameQueue {
-    _frameQueue = frameQueue;
-}
+@implementation MetalViewDelegate
+@synthesize player = _player;
+@synthesize renderer = _renderer;
+@synthesize frameQueue = _frameQueue;
 
 - (void)dealloc {
-    // Correctly handle the C++ object's memory
     delete _renderer;
     _renderer = nullptr;
     [super dealloc];
@@ -258,23 +314,44 @@ void VideoRenderer::render(MTKView* view) {
     cv::Mat frame;
     if (_frameQueue && _frameQueue->pop(frame)) {
         _renderer->updateTextureWithFrame(frame);
-    } else {
     }
     
     _renderer->render(view);
-    
-    if (!*_isRunning) {
-        [NSApp stop:nil];
-    }
 }
-
-- (void)windowWillClose:(NSNotification *)notification {
-    // Set the atomic flag to false to stop the thread.
-    *_isRunning = false;
-}
-
 @end
 
+// NSWindowDelegate implementation to handle window close events.
+@interface WindowDelegate : NSObject <NSWindowDelegate>
+@property (nonatomic, assign) std::atomic<bool>* isRunning;
+@property (nonatomic, strong) id keyboardEventMonitor;
+@end
+
+@implementation WindowDelegate
+- (void)dealloc {
+    if (_keyboardEventMonitor) {
+        // Fix the warning by casting the id to a recognized event monitor type.
+        [NSEvent removeGlobalMonitor: (id)_keyboardEventMonitor];
+    }
+    [super dealloc];
+}
+- (void)windowWillClose:(NSNotification *)notification {
+    // Set the flag to false to stop the main loop.
+    *_isRunning = false;
+    // Post a message to quit the application to ensure the run loop terminates.
+    [NSApp postEvent:[NSEvent otherEventWithType:NSEventTypeSystemDefined
+                                        location:NSMakePoint(0, 0)
+                                   modifierFlags:0
+                                       timestamp:0
+                                    windowNumber:0
+                                         context:nil
+                                         subtype:0
+                                           data1:0
+                                           data2:0]
+               atStart:YES];
+}
+@end
+
+// The rest of your C++ code
 void VideoPlayerFacade::pushFrame(const cv::Mat& frame) {
     _frameQueue->push(frame);
 }
@@ -285,22 +362,15 @@ void VideoPlayerFacade::stopVisualization() {
 
 void VideoPlayerFacade::runAppKitLoop(const DisplayInfo& displayInfo) {
     @autoreleasepool {
-
-        std::cout << "DEBUG: Starting runAppKitLoop on display: " << displayInfo.name << std::endl;
-
         NSApplication* application = [NSApplication sharedApplication];
         NSRect windowRect = NSMakeRect(displayInfo.x, displayInfo.y, displayInfo.width, displayInfo.height);
         
-        // Use NSWindowStyleMaskBorderless for a fullscreen window.
-        NSUInteger windowStyle = NSWindowStyleMaskBorderless;
+        NSWindowStyleMask windowStyle = NSWindowStyleMaskTitled | NSWindowStyleMaskClosable | NSWindowStyleMaskResizable;
         
         NSWindow* window = [[NSWindow alloc] initWithContentRect:windowRect
                                                        styleMask:windowStyle
                                                          backing:NSBackingStoreBuffered
                                                            defer:NO];
-        std::cout << "DEBUG: NSWindow created at " << displayInfo.x << "," << displayInfo.y << " with size " << displayInfo.width << "x" << displayInfo.height << "." << std::endl;
-
-        // Set the window level to floating, so it appears above all other windows.
         [window setLevel:NSFloatingWindowLevel];
         
         id<MTLDevice> device = MTLCreateSystemDefaultDevice();
@@ -309,29 +379,58 @@ void VideoPlayerFacade::runAppKitLoop(const DisplayInfo& displayInfo) {
             return;
         }
 
-        // Create the MetalKit view.
         MTKView* mtkView = [[MTKView alloc] initWithFrame:windowRect device:device];
         [mtkView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
         [mtkView setPaused:NO];
         [mtkView setEnableSetNeedsDisplay:NO];
         [mtkView setClearColor:MTLClearColorMake(0.0, 0.0, 0.0, 1.0)];
 
-        // Create the delegate and set it.
-        _objcMembers->delegate = [[MetalViewDelegate alloc] init];
+        _objcMembers->mtkDelegate = [[MetalViewDelegate alloc] init];
+        _objcMembers->mtkDelegate.player = this;
+        _objcMembers->mtkDelegate.renderer = new VideoRenderer(device);
+        _objcMembers->mtkDelegate.frameQueue = _frameQueue;
+        
         _objcMembers->mtkView = mtkView;
-        _objcMembers->delegate.renderer = new VideoRenderer(device);
-        [_objcMembers->delegate setFrameQueue:_frameQueue];
-        _objcMembers->delegate.isRunning = &_isRunning;
-
-        [_objcMembers->mtkView setDelegate:_objcMembers->delegate];
+        [_objcMembers->mtkView setDelegate:_objcMembers->mtkDelegate];
         [window setContentView:_objcMembers->mtkView];
+        
+        _objcMembers->windowDelegate = [[WindowDelegate alloc] init];
+        ((WindowDelegate*)_objcMembers->windowDelegate).isRunning = &_isRunning;
 
-        // Make the window visible and enter the main event loop.
+        // Use a global event monitor to reliably capture keyboard input.
+        // This is a more robust solution than relying on the first responder chain.
+        // Capture a raw C++ 'this' pointer. This is safe as the block's lifetime is tied to the main run loop,
+        // which ensures 'this' remains valid for the duration of the block's existence.
+        if (AXIsProcessTrusted() == NO) {
+            // Not trusted, so we need to ask the user to grant permission.
+            // This will open the Privacy & Security pane.
+            CFURLRef url = (__bridge CFURLRef)[NSURL URLWithString:@"x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"];
+            AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef)@{
+                (__bridge NSString *)kAXTrustedCheckOptionPrompt: @YES
+            });
+            
+            NSAlert *alert = [[NSAlert alloc] init];
+            [alert setMessageText:@"Accessibility Access Required"];
+            [alert setInformativeText:@"This application needs Accessibility permissions to monitor keyboard events. Please grant access in System Settings > Privacy & Security > Accessibility."];
+            [alert runModal];
+        }
+        
+        _objcMembers->keyboardEventMonitor = [NSEvent addGlobalMonitorForEventsMatchingMask: NSEventMaskKeyDown | NSEventMaskKeyUp
+            handler:^(NSEvent* event) {
+                bool isKeyDown = event.type == NSEventTypeKeyDown;
+                NSString* characters = [event charactersIgnoringModifiers];
+                if ([characters length] > 0) {
+                    unichar keyChar = [characters characterAtIndex:0];
+                    Event keyEvent = { AppEventType::Keyboard, (int)keyChar, 0, isKeyDown };
+                    this->getEventQueue()->push(keyEvent);
+                }
+        }];
+        
+        ((WindowDelegate*)_objcMembers->windowDelegate).keyboardEventMonitor = _objcMembers->keyboardEventMonitor;
+        [window setDelegate:_objcMembers->windowDelegate];
+        
         [window makeKeyAndOrderFront:nil];
         
-        [window setDelegate:_objcMembers->delegate];
-
-        // This is the line that was missing. It starts the main loop.
         [NSApp run];
     }
 }
