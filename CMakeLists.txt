@@ -1,14 +1,44 @@
+# Set the minimum required version of CMake
+# Using a higher version to support C++17 features and modern CMake practices.
 cmake_minimum_required(VERSION 3.16)
-project(VisualHive)
 
-# Set the C++ standard to C++17 to enable the filesystem library
+# Define the project name and language
+project(VisualHive CXX)
+
+# Set the build type to Release for optimization
+set(CMAKE_BUILD_TYPE Release)
+
+# Set the C++ standard to C++17 to enable the filesystem library and other modern features
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# The Ableton Link library requires the Boost system component.
-find_package(Boost REQUIRED COMPONENTS system)
+# Set the Homebrew prefix path for Aubio
+set(HOMEBREW_PREFIX "/opt/homebrew")
+
+# --- Include PortAudio from source ---
+# This command adds the 'portaudio' sub-project and its build targets.
+add_subdirectory(portaudio)
+
+# --- Find Aubio ---
+# Manually locate the Aubio header file.
+find_path(AUBIO_INCLUDE_DIR aubio/aubio.h
+  HINTS ${HOMEBREW_PREFIX}/include
+  NO_DEFAULT_PATH
+)
+
+# Manually locate the Aubio library file.
+find_library(AUBIO_LIBRARY aubio
+  HINTS ${HOMEBREW_PREFIX}/lib
+  NO_DEFAULT_PATH
+)
+
+# --- Check if the libraries were found ---
+if(NOT AUBIO_LIBRARY OR NOT AUBIO_INCLUDE_DIR)
+  message(FATAL_ERROR "Aubio was not found. Please ensure it's installed with Homebrew.")
+endif()
 
 # --- Fetch the nlohmann/json library ---
+# This block handles downloading and building the JSON library automatically.
 include(FetchContent)
 FetchContent_Declare(
   json_library
@@ -16,10 +46,6 @@ FetchContent_Declare(
   GIT_TAG v3.11.2
 )
 FetchContent_MakeAvailable(json_library)
-
-# --- Link to Ableton Link using the local installation ---
-# This method directly includes the AbletonLink configuration file.
-include(../link/AbletonLinkConfig.cmake)
 
 # Find OpenCV
 find_package(OpenCV REQUIRED)
@@ -38,11 +64,6 @@ if(APPLE)
     target_link_libraries(AssetManager PRIVATE ${OpenCV_LIBRARIES})
 endif()
 
-# Define the AbletonLinkManager library
-add_library(AbletonLinkManager src/AbletonLinkManager.cpp src/AbletonLinkManager.h)
-target_link_libraries(AbletonLinkManager PRIVATE Ableton::Link)
-target_include_directories(AbletonLinkManager PRIVATE ${json_library_SOURCE_DIR}/include ${OpenCV_INCLUDE_DIRS})
-
 # Define the library target for your platform-specific code.
 add_library(PlatformSpecificCode STATIC src/PlatformSpecificCode.cpp src/PlatformSpecificCode.h)
 
@@ -53,7 +74,13 @@ if(APPLE)
     target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
 endif()
 
+# Define the beat detection library
+add_library(BpmDetector STATIC src/BpmDetector.cpp src/BpmDetector.h)
+target_link_libraries(BpmDetector PRIVATE portaudio ${AUBIO_LIBRARY} "-framework CoreAudio" "-framework AudioToolbox" "-framework Accelerate")
+target_include_directories(BpmDetector PRIVATE ${AUBIO_INCLUDE_DIR})
+
 # --- Define the main executable and explicitly list all source files ---
+# This now includes the `VisualHive` executable and its source files.
 add_executable(VisualHive
     src/main.cpp
     src/VideoPlayerFacade.mm
@@ -78,10 +105,14 @@ if(APPLE)
     target_link_libraries(VisualHive PRIVATE
         ConfigManager
         AssetManager
-        AbletonLinkManager
         PlatformSpecificCode
+        BpmDetector # Add the new library here
         ${OpenCV_LIBRARIES}
-        Ableton::Link
+        portaudio
+        ${AUBIO_LIBRARY}
+        "-framework CoreAudio"
+        "-framework AudioToolbox"
+        "-framework Accelerate"
         ${FOUNDATION_FRAMEWORK}
         ${APPKIT_FRAMEWORK}
         ${METAL_FRAMEWORK}
@@ -93,16 +124,18 @@ else()
     target_link_libraries(VisualHive PRIVATE
         ConfigManager
         AssetManager
-        AbletonLinkManager
         PlatformSpecificCode
+        BpmDetector # Add the new library here
         ${OpenCV_LIBRARIES}
-        Ableton::Link
+        portaudio
+        ${AUBIO_LIBRARY}
     )
 endif()
 
-# Explicitly add the include directory for the main executable
+# Explicitly add the include directories for the main executable
 target_include_directories(VisualHive PRIVATE
     ${json_library_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
+    ${AUBIO_INCLUDE_DIR}
     src/ # To find all headers
 )
