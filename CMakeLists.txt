@@ -15,7 +15,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json_library)
 
-# --- 2. Fetch Asio (Required dependency) ---
+# --- 2. Fetch Asio ---
 FetchContent_Declare(
   asio
   GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
@@ -23,28 +23,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(asio)
 
-# --- 3. Fetch Ableton Link (Source Only) ---
+# --- 3. Fetch Ableton Link ---
 FetchContent_Declare(
   ableton_link
   GIT_REPOSITORY https://github.com/Ableton/link.git
   GIT_TAG        Link-3.0.6
 )
-# We use Populate instead of MakeAvailable to just get the source path
 FetchContent_GetProperties(ableton_link)
 if(NOT ableton_link_POPULATED)
   FetchContent_Populate(ableton_link)
 endif()
 
-# --- THE OFFICIAL FIX (From your Screenshot) ---
-# This file creates the "Ableton::Link" target for us automatically.
+# Setup Ableton::Link
 include(${ableton_link_SOURCE_DIR}/AbletonLinkConfig.cmake)
-
-# --- Wiring Asio to Ableton::Link ---
-# The config creates Ableton::Link, but since we downloaded Asio manually, 
-# we must tell Ableton::Link where to find it.
 target_compile_definitions(Ableton::Link INTERFACE ASIO_STANDALONE LINK_PLATFORM_ASIO=1)
 target_include_directories(Ableton::Link INTERFACE ${asio_SOURCE_DIR}/asio/include)
-
 
 # Find OpenCV
 find_package(OpenCV REQUIRED)
@@ -71,10 +64,14 @@ else()
     target_link_libraries(AssetManager PRIVATE ${OpenCV_LIBRARIES})
 endif()
 
+# --- PlatformSpecificCode ---
+add_library(PlatformSpecificCode STATIC src/PlatformSpecificCode.cpp src/PlatformSpecificCode.h)
+if(APPLE)
+    target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
+endif()
+
 # --- AbletonLinkManager ---
 add_library(AbletonLinkManager src/AbletonLinkManager.cpp src/AbletonLinkManager.h)
-
-# Now we can simply link "Ableton::Link" as the docs intended!
 target_link_libraries(AbletonLinkManager 
     PRIVATE 
     Ableton::Link
@@ -82,11 +79,22 @@ target_link_libraries(AbletonLinkManager
 ) 
 target_include_directories(AbletonLinkManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 
-# --- PlatformSpecificCode ---
-add_library(PlatformSpecificCode STATIC src/PlatformSpecificCode.cpp src/PlatformSpecificCode.h)
-if(APPLE)
-    target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
-endif()
+# --- NEW: AppGraphics (GraphicsManager + RuntimeState) ---
+add_library(AppGraphics STATIC 
+    src/GraphicsManager.cpp 
+    src/GraphicsManager.h
+    src/RuntimeState.cpp
+    src/RuntimeState.h
+)
+
+# AppGraphics needs access to AssetManager, Config, Platform code and OpenCV
+target_link_libraries(AppGraphics 
+    PRIVATE
+    AssetManager
+    ConfigManager
+    PlatformSpecificCode
+    ${OpenCV_LIBRARIES}
+)
 
 # --- Main Executable ---
 add_executable(VisualHive src/main.cpp)
@@ -96,6 +104,7 @@ target_link_libraries(VisualHive PRIVATE
     AssetManager
     AbletonLinkManager
     PlatformSpecificCode
+    AppGraphics          # Link the new library
     ${OpenCV_LIBRARIES}
     Ableton::Link
 )
@@ -104,6 +113,7 @@ target_include_directories(VisualHive PRIVATE
     ${json_library_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
     ${ableton_link_SOURCE_DIR}/include
+    src 
 )
 
 if(APPLE)

@@ -47,7 +47,7 @@ class Background {
         this->type = type; 
         this->asset_source = asset_source; 
     }
-    std::string get_source() { return asset_source; }
+    std::string get_source() const { return asset_source; }
 
     const cv::Scalar get_foreground_color() const { 
         int64_t r = foregroundColor[0];
@@ -121,7 +121,7 @@ class Foreground {
     
     const cv::Mat get_first_frame() const;
 
-    void open();
+    bool open();
     void close();
     cv::Mat get_next_frame();
 

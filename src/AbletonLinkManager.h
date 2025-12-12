@@ -7,3 +7,4 @@ extern int PHRASE_LENGTH;
 extern int BPM;
 
 ableton::Link * loadAbletonLink(const AppConfig & config);
+void manualSync(ableton::Link * link);

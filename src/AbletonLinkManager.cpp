@@ -22,3 +22,14 @@ ableton::Link * loadAbletonLink(const AppConfig& config) {
 
     return link;
 }
+
+void manualSync(ableton::Link * link) {
+    auto now = std::chrono::microseconds(link->clock().micros());
+    auto timeline = link->captureAppSessionState();
+    double currentBeat = timeline.beatAtTime(now, 4);
+    double phaseOffset = std::fmod(currentBeat, 1.0);
+    double correctedBeat = currentBeat - phaseOffset;
+    timeline.forceBeatAtTime(correctedBeat, now, 4);
+
+    std::cout << "Manual sync triggered. Corrected beat: " << correctedBeat << std::endl;
+}

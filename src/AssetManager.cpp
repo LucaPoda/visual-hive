@@ -170,10 +170,15 @@ const cv::Mat Foreground::get_first_frame() const {
     return cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
 }
 
-void Foreground::open() {
+bool Foreground::open() {
     this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+    
+    // Check if data is empty (load failed)
+    if (this->data.empty()) {
+        return false;
+    }
+    return true;
 }
-
 void Foreground::close() {
     // todo: understand how to close an image
 }
