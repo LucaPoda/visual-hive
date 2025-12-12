@@ -9,6 +9,14 @@
 
 namespace fs = std::filesystem;
 
+// Enum for Energy Levels
+enum EnergyLevel {
+    LOW,
+    MID,
+    HIGH,
+    MANUAL
+};
+
 // Enum to differentiate between background and foreground assets
 enum BackgroundType {
     VIDEO_LOOP,
@@ -29,11 +37,11 @@ class Background {
     std::vector<int64_t> foregroundColor;
     
     BackgroundType type;
+    EnergyLevel energyLevel = LOW; // Default to LOW
+    bool forceNoForeground = false;
+
     cv::VideoCapture video_loop_cap;
     cv::Mat solid_color_img;
-
-
-    // cv::Mat data; // Store the asset's image/video data in memory
 
     public:
     const std::string & get_key() const { return key; }
@@ -78,6 +86,12 @@ class Background {
 
     const cv::Mat get_first_frame() const;
     const cv::Mat get_solid_color_frame(int width, int height, const cv::Scalar& color) const;
+
+    const EnergyLevel& get_energy_level() const { return energyLevel; }
+    void set_energy_level(const EnergyLevel& level) { this->energyLevel = level; }
+
+    const bool& get_force_no_foreground() const { return forceNoForeground; }
+    void set_force_no_foreground(bool value) { this->forceNoForeground = value; }
 
     bool open();
     void close();
@@ -194,7 +208,7 @@ public:
     
     cv::Mat blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor);
     
-    
+    const AssetsConfig& getAssets() const { return assets; }
 
     std::optional<Background> getDefaultBackground();
     std::optional<Foreground> getDefaultForeground();

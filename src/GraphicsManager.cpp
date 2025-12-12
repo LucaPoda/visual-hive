@@ -51,27 +51,36 @@ cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int tar
 double GraphicsManager::calculateBounceScale(RuntimeState& state, double currentBeat, double tempo, std::chrono::microseconds now) {
     double scale = 1.0;
 
-    if (state.isBounceActive || state.isAnimating) {
-        // Check if we hit a new beat
-        if (std::floor(currentBeat) > state.lastBeat) {
-            state.lastBeat = std::floor(currentBeat);
+    // 1. Detect Beat Change
+    // We must update lastBeat regardless of bounce state to keep sync
+    if (std::floor(currentBeat) > state.lastBeat) {
+        state.lastBeat = std::floor(currentBeat);
+        
+        // Only trigger a NEW animation if the user actually wants bounce
+        if (state.isBounceActive) {
             state.isAnimating = true;
             state.animationStartTime = now;
         }
+    }
 
-        if (state.isAnimating) {
-            auto elapsed = now - state.animationStartTime;
-            double beatDuration = (60.0 / tempo) * 1000000.0; // microseconds
-            double progress = static_cast<double>(elapsed.count()) / beatDuration;
+    // 2. Process Animation Logic
+    // This runs if an animation is currently correctly active. 
+    // If user turns off bounce mid-beat, this allows the current bounce to finish gracefully 
+    // before stopping (because isAnimating will remain true until progress >= 1.0).
+    if (state.isAnimating) {
+        auto elapsed = now - state.animationStartTime;
+        double beatDuration = (60.0 / tempo) * 1000000.0; // microseconds
+        double progress = static_cast<double>(elapsed.count()) / beatDuration;
 
-            if (progress < 1.0) {
-                // Sine wave bounce: 1.0 -> 1.2 -> 1.0
-                scale = 1.0 + 0.2 * std::sin((progress + 0.5) * (M_PI));
-            } else {
-                state.isAnimating = false;
-            }
+        if (progress < 1.0) {
+            // Sine wave bounce: 1.0 -> 1.2 -> 1.0
+            scale = 1.0 + 0.2 * std::sin((progress + 0.75) * (M_PI));
+        } else {
+            // Animation finished
+            state.isAnimating = false;
         }
     }
+    
     return scale;
 }
 
@@ -79,16 +88,17 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
     cv::Mat frame = state.activeBackground.get_next_frame();
     cv::Mat outputFrame = scaleToFit(frame, displayWidth, displayHeight);
 
-    // Blend foreground
-    outputFrame = assetMgr.blend(
-        outputFrame, 
-        state.activeForeground.get_next_frame(), 
-        displayWidth, 
-        displayHeight, 
-        state.activeForeground.get_scale() * scale, 
-        state.activeBackground.get_foreground_color()
-    );
-
+    if (!state.activeBackground.get_force_no_foreground()) {
+        // Only blend if allowed
+        outputFrame = assetMgr.blend(
+            outputFrame, 
+            state.activeForeground.get_next_frame(), 
+            displayWidth, 
+            displayHeight, 
+            state.activeForeground.get_scale() * scale, 
+            state.activeBackground.get_foreground_color()
+        );
+    }
     return outputFrame;
 }
 
@@ -119,6 +129,7 @@ cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& 
 
 void GraphicsManager::show(const cv::Mat& frame) {
     cv::imshow(windowName, frame);
+    cv::imshow("Laptop_Monitor_Preview", frame);
 }
 
 int GraphicsManager::enforceFramePacing(RuntimeState& state) {

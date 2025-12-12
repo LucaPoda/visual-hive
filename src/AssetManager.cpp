@@ -15,17 +15,30 @@ cv::Scalar toScalar(const std::string& hexColor);
 fs::path Background::backgroundsPath;
 fs::path Foreground::foregroundsPath;
 
+NLOHMANN_JSON_SERIALIZE_ENUM(EnergyLevel, {
+    {LOW, "low"},
+    {MID, "mid"},
+    {HIGH, "high"},
+    {MANUAL, "manual"}
+})
+
 // Background conversion
 void to_json(nlohmann::json& j, const Background& b) {
     j = nlohmann::json{
         {"foreground_color", b.foregroundColor}, 
-        {"key", b.key}
+        {"key", b.key},
+        {"energy_level", b.energyLevel},
+        {"force_no_foreground", b.forceNoForeground}
     };
 }
 
 void from_json(const nlohmann::json& j, Background& b) {
     j.at("foreground_color").get_to(b.foregroundColor);
     j.at("key").get_to(b.key);
+    
+    // Use value() to provide defaults if the field is missing in old configs
+    b.energyLevel = j.value("energy_level", LOW); 
+    b.forceNoForeground = j.value("force_no_foreground", false);
 }
 
 // Foreground conversion

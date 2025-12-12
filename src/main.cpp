@@ -18,6 +18,16 @@
 
 namespace fs = std::filesystem;
 
+std::string getEnergyLabel(EnergyLevel level) {
+    switch (level) {
+        case LOW: return "LOW";
+        case MID: return "MID";
+        case HIGH: return "HIGH";
+        case MANUAL: return "MANUAL";
+        default: return "???";
+    }
+}
+
 int main() {
     // 1. Initialization
     ConfigManager configManager("config/config.json");
@@ -48,6 +58,14 @@ int main() {
             double currentBeat = timeline.beatAtTime(now, 4);
             double tempo = timeline.tempo();
 
+            if (state.isAutoMode) {
+                // Check if enough beats have passed since the last switch
+                if (currentBeat - state.lastSwitchBeat >= state.nextSwitchDuration) {
+                    // Access assets via a getter (you might need to add getAssets() to AssetManager)
+                    state.triggerAutoSwitch(assetManager.getAssets(), currentBeat);
+                }
+            }
+
             // --- Graphics Pipeline ---
             // 1. Calculate animation scale (Bounce)
             double scale = graphics.calculateBounceScale(state, currentBeat, tempo, now);
@@ -68,14 +86,53 @@ int main() {
             if (key == 27) break; // ESC
 
             if (key > 0) {
-                if (key == 'l') { // Toggle Link
+                if (key == 'm') {
+                    state.isAutoMode = !state.isAutoMode;
+                    if (state.isAutoMode) {
+                        // Reset beat counter when enabling so it doesn't switch immediately if previously old
+                        state.lastSwitchBeat = currentBeat; 
+                        std::cout << "[AUTO] Enabled. Energy: " << state.currentEnergyTarget << "\n";
+                    } else {
+                        std::cout << "[AUTO] Disabled.\n";
+                    }
+                }
+                else if (key == 'j') {
+                    state.currentEnergyTarget = LOW;
+                    std::cout << "[ENERGY] Set to LOW\n";
+                }
+                else if (key == 'k') {
+                    state.currentEnergyTarget = MID;
+                    std::cout << "[ENERGY] Set to MID\n";
+                }
+                else if (key == 'l') { // Note: 'l' was used for Link toggle in previous code. You might want to remap Link to 'L' (shift+l) or another key.
+                    // Assuming 'l' is now High Energy
+                    state.currentEnergyTarget = HIGH;
+                    std::cout << "[ENERGY] Set to HIGH\n";
+                }
+                else if (key == 'z') { // Toggle Link
                     state.linkEnabled = !state.linkEnabled;
                     link->enable(state.linkEnabled);
                     std::cout << "Ableton Link " << (state.linkEnabled ? "enabled" : "disabled") << ".\n";
                     if (!state.linkEnabled) state.queuedForeground = std::nullopt;
                 }
-                else if (key == 'r') { // Manual Sync
+                else if (key == 'x') { // Manual Sync
+                    // 1. Align the Beat Grid (Link Logic)
                     manualSync(link);
+
+                    // 2. Reset the Visual Counter (Auto-Mode Logic)
+                    // We must re-capture the time because manualSync just changed it slightly
+                    auto syncNow = std::chrono::microseconds(link->clock().micros());
+                    auto syncTimeline = link->captureAppSessionState();
+                    double syncedBeat = syncTimeline.beatAtTime(syncNow, 4);
+
+                    // Tell the state that the "last switch" effectively happened NOW.
+                    state.lastSwitchBeat = syncedBeat;
+                    
+                    // Force the NEXT switch to be standard 32 beats.
+                    // This guarantees that 32 beats from pressing 'r', the visual will change.
+                    state.nextSwitchDuration = 32;
+
+                    std::cout << "[AUTO] Counter reset. Next switch in 32 beats.\n";
                 }
                 else if (key == 'b') { // Toggle Bounce
                     state.isBounceActive = !state.isBounceActive;
@@ -94,8 +151,29 @@ int main() {
                 }
             }
             
-            // Console Status
-            std::cout << "LINK: " << peers << " | BPM: " << std::fixed << std::setprecision(2) << tempo << std::flush << "\r";
+            // --- Dashboard Output ---
+            // Calculate beats remaining for auto switch
+            int beatsRemaining = 0;
+            if (state.isAutoMode) {
+                beatsRemaining = state.nextSwitchDuration - static_cast<int>(currentBeat - state.lastSwitchBeat);
+                if (beatsRemaining < 0) beatsRemaining = 0;
+            }
+
+            std::cout << "\r" 
+                      << "LNK:" << (state.linkEnabled ? "ON" : "OFF") << "|" << peers << "|" << std::fixed << std::setprecision(1) << tempo 
+                      << "  AUTO:" << (state.isAutoMode ? "ON" : "OFF");
+            
+            if (state.isAutoMode) {
+                std::cout << "|" << std::setw(6) << std::left << getEnergyLabel(state.currentEnergyTarget) 
+                          << "|nxt:" << std::setw(3) << beatsRemaining;
+            } else {
+                std::cout << "|------|-------";
+            }
+
+            std::cout << "  BNC:" << (state.isBounceActive ? "ON" : "OFF")
+                      << "  BG:[" << state.activeBackground.get_key() << "]"
+                      << "  FG:[" << (state.activeForeground.get_key().empty() ? "-" : state.activeForeground.get_key()) << "]"
+                      << "      " << std::flush; // Extra spaces to clear trailing characters
         }
 
     } catch (const std::exception& e) {
