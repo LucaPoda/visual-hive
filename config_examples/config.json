@@ -1,0 +1,14 @@
+{
+    "paths": {
+        "assets_directory": "assets",
+        "key_mapping_file": "config/key_mapping.csv",
+        "assets_config_file": "config/assets_config.json"
+    },
+    "display": {
+        "window_name": "Visual Hive Live"
+    },
+    "ableton_link": {
+        "phrase_length": 4,
+        "default_bpm": 120.0
+    }
+}

@@ -1,0 +1,190 @@
+{
+    "backgrounds": {
+        "loop_01_1.mp4": {
+            "energy_level": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                254,
+                201,
+                8
+            ],
+            "key": "1"
+        },
+        "loop_02_2.mov": {
+            "energy_level": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                250,
+                245
+            ],
+            "key": "2"
+        },
+        "loop_03_3.mp4": {
+            "energy_level": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "3"
+        },
+        "loop_04_4.mp4": {
+            "energy_level": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "4"
+        },
+        "loop_09_5.mov": {
+            "energy_level": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "5"
+        },
+        "loop_10_t.mov": {
+            "energy_level": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                225,
+                255,
+                255
+            ],
+            "key": "t"
+        },
+        "loop_11_6.mp4": {
+            "energy_level": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "6"
+        },
+        "loop_12_y.mp4": {
+            "energy_level": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                230,
+                230,
+                235
+            ],
+            "key": "y"
+        },
+        "loop_13_7.mp4": {
+            "energy_level": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "7"
+        },
+        "loop_14_u.mov": {
+            "energy_level": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "u"
+        },
+        "loop_15_8.mov": {
+            "energy_level": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                235,
+                245,
+                255
+            ],
+            "key": "8"
+        },
+        "loop_16_i.mov": {
+            "energy_level": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                240,
+                248,
+                255
+            ],
+            "key": "i"
+        },
+        "loop_17_9.mov": {
+            "energy_level": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                240,
+                250
+            ],
+            "key": "9"
+        },
+        "loop_18_o.mp4": {
+            "energy_level": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "o"
+        },
+        "loop_19_0.mov": {
+            "energy_level": "manual",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "0"
+        },
+        "loop_20_p.mp4": {
+            "energy_level": "manual",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "p"
+        }
+    },
+    "default": {
+        "background": "loop_01_1.mp4",
+        "foreground": "ph-text.png"
+    },
+    "foregrounds": {
+        "empty.png": {
+            "key": "g",
+            "scale": 60.0
+        },
+        "ph-text.png": {
+            "key": "a",
+            "scale": 80.0
+        },
+        "ph.png": {
+            "key": "s",
+            "scale": 60.0
+        },
+        "poda.png": {
+            "key": "d",
+            "scale": 60.0
+        },
+        "resx.png": {
+            "key": "f",
+            "scale": 60.0
+        }
+    }
+}
