@@ -104,12 +104,12 @@ DisplayInfo selectTargetDisplay() {
     int selectedDisplayId = -1;
     if (displays.size() == 1) {
         selectedDisplayId = displays[0].id;
-        std::cout << "Only one display found, selecting it automatically.\n";
+        std::cout << std::endl << "[INFO] Only one display found, selecting it automatically.\n";
     } else {
-        std::cout << "\nEnter the ID of the display you want to use for visuals: ";
+        std::cout << "[INFO] Enter the ID of the display you want to use for visuals: ";
         std::cin >> selectedDisplayId;
         if (std::cin.fail()) {
-            std::cerr << "Invalid input. Please enter a number. Exiting.\n";
+            std::cerr << "[ERROR] Invalid input. Please enter a number. Exiting.\n";
             exit(1);
         }
     }
@@ -126,11 +126,11 @@ DisplayInfo selectTargetDisplay() {
     }
 
     if (!found) {
-        std::cerr << "Display with ID " << selectedDisplayId << " not found. Exiting.\n";
+        std::cerr << "[ERROR] Display with ID " << selectedDisplayId << " not found. Exiting.\n";
         exit(1);
     }
 
-    std::cout << "Selected display: " << targetDisplay.name
+    std::cout << "[INFO] Selected display: " << targetDisplay.name
               << " (" << targetDisplay.width << "x" << targetDisplay.height << " pixels"
               << " at (" << targetDisplay.x << ", " << targetDisplay.y << "))\n";
 

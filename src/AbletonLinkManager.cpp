@@ -4,19 +4,19 @@ int PHRASE_LENGTH = 0;
 int BPM = 0;
 
 ableton::Link * loadAbletonLink(const AppConfig& config) {
-    std::cout << "Initializing Ableton Link..." << std::endl;
+    std::cout << "[INFO] Initializing Ableton Link..." << std::endl;
 
     PHRASE_LENGTH = config.phraseLength;
     BPM = config.default_bpm;
     ableton::Link * link = new ableton::Link(PHRASE_LENGTH);
 
-    std::cout << "Connecting to Ableton Link session..." << std::endl;
+    std::cout << "[INFO] Connecting to Ableton Link session..." << std::endl;
 
     // Enable the Link session to join the local network.
     link->enable(true);
     link->setTempoCallback([](double newTempo) {
         // This code will be executed whenever the tempo changes
-        std::cout << "Tempo changed to: " << newTempo << " BPM\n";
+        // std::cout << "[INFO] Tempo changed to: " << newTempo << " BPM\n";
         BPM = newTempo;
     });
 
@@ -31,5 +31,5 @@ void manualSync(ableton::Link * link) {
     double correctedBeat = currentBeat - phaseOffset;
     timeline.forceBeatAtTime(correctedBeat, now, 4);
 
-    std::cout << "Manual sync triggered. Corrected beat: " << correctedBeat << std::endl;
+    std::cout << std::endl << "[INFO] Manual sync triggered. Corrected beat: " << correctedBeat << std::endl;
 }

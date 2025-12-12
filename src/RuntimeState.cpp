@@ -97,7 +97,7 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets, double currentB
     if (currentEnergyTarget == HIGH)
         nextSwitchDuration = durations[0];
 
-    std::cout << "[AUTO] Switched to " << selected.get_source() 
-              << " (" << (currentEnergyTarget == LOW ? "LOW" : (currentEnergyTarget == MID ? "MID" : "HIGH")) 
-              << "). Next in " << nextSwitchDuration << " beats.\n";
+//     std::cout << std::endl << "[AUTO] Switched to " << selected.get_source() 
+//               << " (" << (currentEnergyTarget == LOW ? "LOW" : (currentEnergyTarget == MID ? "MID" : "HIGH")) 
+//               << "). Next in " << nextSwitchDuration << " beats.\n";
 }

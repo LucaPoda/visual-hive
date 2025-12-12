@@ -47,7 +47,7 @@ int main() {
         // GraphicsManager handles window creation and scaling logic
         GraphicsManager graphics(config, targetDisplay);
 
-        std::cout << "System initialized. Starting loop.\n";
+        std::cout << "[INFO] System initialized. Starting loop.\n";
 
         // 4. Main Loop
         while (true) {
@@ -91,28 +91,28 @@ int main() {
                     if (state.isAutoMode) {
                         // Reset beat counter when enabling so it doesn't switch immediately if previously old
                         state.lastSwitchBeat = currentBeat; 
-                        std::cout << "[AUTO] Enabled. Energy: " << state.currentEnergyTarget << "\n";
+                        std::cout << std::endl << "[AUTO] Enabled. Energy: " << state.currentEnergyTarget << "\n";
                     } else {
-                        std::cout << "[AUTO] Disabled.\n";
+                        std::cout << std::endl << "[AUTO] Disabled.\n";
                     }
                 }
                 else if (key == 'j') {
                     state.currentEnergyTarget = LOW;
-                    std::cout << "[ENERGY] Set to LOW\n";
+                    // std::cout << std::endl << "[ENERGY] Set to LOW\n";
                 }
                 else if (key == 'k') {
                     state.currentEnergyTarget = MID;
-                    std::cout << "[ENERGY] Set to MID\n";
+                    // std::cout << std::endl << "[ENERGY] Set to MID\n";
                 }
                 else if (key == 'l') { // Note: 'l' was used for Link toggle in previous code. You might want to remap Link to 'L' (shift+l) or another key.
                     // Assuming 'l' is now High Energy
                     state.currentEnergyTarget = HIGH;
-                    std::cout << "[ENERGY] Set to HIGH\n";
+                    // std::cout << std::endl << "[ENERGY] Set to HIGH\n";
                 }
                 else if (key == 'z') { // Toggle Link
                     state.linkEnabled = !state.linkEnabled;
                     link->enable(state.linkEnabled);
-                    std::cout << "Ableton Link " << (state.linkEnabled ? "enabled" : "disabled") << ".\n";
+                    std::cout << std::endl << "[LINK] Set" << (state.linkEnabled ? "enabled" : "disabled") << ".\n";
                     if (!state.linkEnabled) state.queuedForeground = std::nullopt;
                 }
                 else if (key == 'x') { // Manual Sync
@@ -132,7 +132,7 @@ int main() {
                     // This guarantees that 32 beats from pressing 'r', the visual will change.
                     state.nextSwitchDuration = 32;
 
-                    std::cout << "[AUTO] Counter reset. Next switch in 32 beats.\n";
+                    std::cout << std::endl << "[AUTO] Counter reset. Next switch in 32 beats.\n";
                 }
                 else if (key == 'b') { // Toggle Bounce
                     state.isBounceActive = !state.isBounceActive;
@@ -146,7 +146,7 @@ int main() {
                     } 
                     else if (fg.has_value()) {
                         state.queueForeground(fg.value());
-                        std::cout << "Queued foreground: " << fg->get_foreground_path() << "\n";
+                        // std::cout << "Queued foreground: " << fg->get_foreground_path() << "\n";
                     }
                 }
             }
@@ -160,19 +160,19 @@ int main() {
             }
 
             std::cout << "\r" 
-                      << "LNK:" << (state.linkEnabled ? "ON" : "OFF") << "|" << peers << "|" << std::fixed << std::setprecision(1) << tempo 
-                      << "  AUTO:" << (state.isAutoMode ? "ON" : "OFF");
+                      << "[RUNTIME] LINK:" << (state.linkEnabled ? "ON" : "OFF") << " - " << peers << " - " << std::fixed << std::setprecision(1) << tempo 
+                      << " | AUTO: " << (state.isAutoMode ? "ON" : "OFF");
             
             if (state.isAutoMode) {
-                std::cout << "|" << std::setw(6) << std::left << getEnergyLabel(state.currentEnergyTarget) 
-                          << "|nxt:" << std::setw(3) << beatsRemaining;
+                std::cout << " |" << std::setw(6) << std::left << getEnergyLabel(state.currentEnergyTarget) 
+                          << "| NEXT IN:" << std::setw(3) << beatsRemaining;
             } else {
                 std::cout << "|------|-------";
             }
 
-            std::cout << "  BNC:" << (state.isBounceActive ? "ON" : "OFF")
-                      << "  BG:[" << state.activeBackground.get_key() << "]"
-                      << "  FG:[" << (state.activeForeground.get_key().empty() ? "-" : state.activeForeground.get_key()) << "]"
+            std::cout << "  BOUNCE: " << (state.isBounceActive ? "ON" : "OFF")
+                      << "  BG: [" << state.activeBackground.get_key() << "]"
+                      << "  FG: [" << (state.activeForeground.get_foreground_path()) << "]"
                       << "      " << std::flush; // Extra spaces to clear trailing characters
         }
 

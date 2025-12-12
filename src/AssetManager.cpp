@@ -262,7 +262,7 @@ void AssetManager::loadAssetsIntoMemory() {
             value.set_source(SOLID_COLOR, key);
         }
         else {
-            std::cout << "ERROR: Current asset is neither a color or an existing file: " << key << "\n";
+            std::cout << "[ERROR] Current asset is neither a color or an existing file: " << key << "\n";
             exit(1);
         }
 
@@ -284,7 +284,7 @@ void AssetManager::loadAssetsIntoMemory() {
     }
 
     for (auto bg : this->assets.get_backgrounds()) {
-        std::cout << bg.first << ": " << bg.second.get_background_path().value_or("solid color") << " - " << bg.second.get_type() << "\n";
+        std::cout << "[INFO] Loading asset " << bg.first << ": " << bg.second.get_background_path().value_or("solid color") << " - " << bg.second.get_type() << "\n";
     }
 
     nlohmann::json j;
@@ -292,7 +292,7 @@ void AssetManager::loadAssetsIntoMemory() {
     std::ofstream o(this->appConfig.assetsConfigFile);
 
     if (!o.is_open()) {
-        std::cerr << "Error: Could not open the file for writing." << std::endl;
+        std::cerr << "[ERROR]: Could not open the file for writing." << std::endl;
         exit(1);
     }
 
@@ -300,7 +300,7 @@ void AssetManager::loadAssetsIntoMemory() {
 
     o.close();
 
-    std::cout << "Successfully saved the updated configuration to updated_config.json" << std::endl;
+    std::cout << "[INFO] Successfully saved the updated configuration to updated_config.json" << std::endl;
 
 }
 
@@ -322,7 +322,7 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
 
     // Adjust dimensions to fit the screen
     if (targetWidth > screenWidth || newHeight > screenHeight) {
-        std::cout << "Warning: Foreground scale is too large. Adjusting to fit screen." << std::endl;
+        std::cout << std::endl << "[WARNING] Foreground scale " << targetWidth << "x" << newHeight << " too large. Adjusting to fit screen..." << std::endl;
         
         if (targetWidth > screenWidth) {
             targetWidth = screenWidth;
