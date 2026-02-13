@@ -14,16 +14,17 @@ private:
     int displayWidth;
     int displayHeight;
 
-    // Helper: Resize frame to fit maintaining aspect ratio
-    cv::Mat scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor = cv::Scalar(0, 0, 0));
-
-public:
+    
+    public:
     GraphicsManager(const AppConfig& config, const DisplayInfo& display);
     ~GraphicsManager();
-
+    
     double calculateBounceScale(RuntimeState& state, double currentBeat, double tempo, std::chrono::microseconds now);
     
     cv::Mat composeFrame(RuntimeState& state, AssetManager& assetMgr, double scale);
+    
+    // Helper: Resize frame to fit maintaining aspect ratio
+    cv::Mat scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor = cv::Scalar(0, 0, 0));
     
     cv::Mat applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm);
     

@@ -15,6 +15,7 @@
 #include "AbletonLinkManager.h"
 #include "RuntimeState.h"
 #include "GraphicsManager.h"
+#include "WindowCapturer.hpp"
 
 namespace fs = std::filesystem;
 
@@ -39,6 +40,20 @@ int main() {
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
+    // --- Window Capture Setup ---
+    WindowCapturer capturer;
+    bool isCaptureMode = false; 
+    // You can set this via config or a key toggle later
+    
+    // Identify the target window (e.g., your browser)
+    // If not found, it prints the list of available windows automatically
+    if (capturer.startCapture("Arc")) {  // <-- NEW
+        std::cout << "[INFO] Window capture target initialized.\n";
+    }
+    else {
+        std::cout << "[ERROR] Failed starting capture.\n";
+    }
+
     try {
         // 3. State & Graphics Instantiation
         // RuntimeState automatically loads default assets and sets timestamps
@@ -48,6 +63,8 @@ int main() {
         GraphicsManager graphics(config, targetDisplay);
 
         std::cout << "[INFO] System initialized. Starting loop.\n";
+
+        bool isCaptureMode = false; // Toggle variable 🔄
 
         // 4. Main Loop
         while (true) {
@@ -76,6 +93,25 @@ int main() {
             // 3. Apply Strobe (if Space is held)
             outputFrame = graphics.applyStrobeEffect(outputFrame, state, tempo);
 
+            // 2. The Logic Switch 🎛️
+            if (isCaptureMode) {
+                std::cout << "1" << std::endl;
+                // Grab the live window content
+                bool success = capturer.getLatestFrame(outputFrame);
+                std::cout << "2" << std::endl;
+                
+                if (success) {
+                    std::cout << "3" << std::endl;
+                    // Scale it to fit the display using your GraphicsManager function
+                    // We bypass composeFrame() to avoid asset blending
+                    outputFrame = graphics.scaleToFit(outputFrame, targetDisplay.width, targetDisplay.height);
+                    std::cout << "4" << std::endl;
+                }
+            }
+            
+            std::cout << "5" << std::endl;
+
+
             // 4. Render
             graphics.show(outputFrame);
 
@@ -84,6 +120,10 @@ int main() {
 
             // --- Input Handling ---
             if (key == 27) break; // ESC
+
+            if (key == '-') { // Toggle Capture Mode
+                isCaptureMode = !isCaptureMode;
+            }
 
             if (key > 0) {
                 if (key == 'm') {
@@ -159,21 +199,26 @@ int main() {
                 if (beatsRemaining < 0) beatsRemaining = 0;
             }
 
-            std::cout << "\r" 
-                      << "[RUNTIME] LINK:" << (state.linkEnabled ? "ON" : "OFF") << " - " << peers << " - " << std::fixed << std::setprecision(1) << tempo 
-                      << " | AUTO: " << (state.isAutoMode ? "ON" : "OFF");
-            
-            if (state.isAutoMode) {
-                std::cout << " |" << std::setw(6) << std::left << getEnergyLabel(state.currentEnergyTarget) 
-                          << "| NEXT IN:" << std::setw(3) << beatsRemaining;
-            } else {
-                std::cout << "|------|-------";
+            if (isCaptureMode) {
+                std::cout << "\n[RUNTIME] " << (isCaptureMode ? "Capturing Window" : "Normal Assets") << "\n";
             }
-
-            std::cout << "  BOUNCE: " << (state.isBounceActive ? "ON" : "OFF")
-                      << "  BG: [" << state.activeBackground.get_key() << "]"
-                      << "  FG: [" << (state.activeForeground.get_foreground_path()) << "]"
-                      << "      " << std::flush; // Extra spaces to clear trailing characters
+            else {
+                std::cout << "\r" 
+                << "[RUNTIME] LINK:" << (state.linkEnabled ? "ON" : "OFF") << " - " << peers << " - " << std::fixed << std::setprecision(1) << tempo 
+                << " | AUTO: " << (state.isAutoMode ? "ON" : "OFF");
+                
+                if (state.isAutoMode) {
+                    std::cout << " |" << std::setw(6) << std::left << getEnergyLabel(state.currentEnergyTarget) 
+                    << "| NEXT IN:" << std::setw(3) << beatsRemaining;
+                } else {
+                    std::cout << "|------|-------";
+                }
+                
+                std::cout << "  BOUNCE: " << (state.isBounceActive ? "ON" : "OFF")
+                << "  BG: [" << state.activeBackground.get_key() << "]"
+                << "  FG: [" << (state.activeForeground.get_foreground_path()) << "]"
+                << "      " << std::flush; // Extra spaces to clear trailing characters
+            }
         }
 
     } catch (const std::exception& e) {

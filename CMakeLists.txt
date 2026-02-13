@@ -23,7 +23,7 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(asio)
 
-# --- 3. Fetch Ableton Link ---
+# --- 3. Fetch Ableton Link (KEPT EXACTLY AS YOUR WORKING VERSION) ---
 FetchContent_Declare(
   ableton_link
   GIT_REPOSITORY https://github.com/Ableton/link.git
@@ -42,12 +42,19 @@ target_include_directories(Ableton::Link INTERFACE ${asio_SOURCE_DIR}/asio/inclu
 # Find OpenCV
 find_package(OpenCV REQUIRED)
 
-# macOS Frameworks
+# --- macOS Frameworks (UPDATED) ---
 if(APPLE)
     find_library(COREGRAPHICS_LIBRARY CoreGraphics)
     find_library(APPLICATIONSERVICES_LIBRARY ApplicationServices)
     find_library(COREAUDIO_LIBRARY CoreAudio)       
     find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox) 
+    
+    # NEW: Required for WindowCapturer 🎥
+    find_library(SCREENCAPTURE_LIBRARY ScreenCaptureKit)
+    find_library(COREMEDIA_LIBRARY CoreMedia)
+    find_library(COREVIDEO_LIBRARY CoreVideo)
+    find_library(COREFOUNDATION_LIBRARY CoreFoundation)
+    find_library(FOUNDATION_LIBRARY Foundation)
 endif()
 
 # --- ConfigManager ---
@@ -76,16 +83,22 @@ target_link_libraries(AbletonLinkManager
     PRIVATE 
     Ableton::Link
     ConfigManager
+    nlohmann_json::nlohmann_json # Added to fix the missing header error
 ) 
 target_include_directories(AbletonLinkManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 
-# --- NEW: AppGraphics (GraphicsManager + RuntimeState) ---
+# --- NEW: AppGraphics (UPDATED with WindowCapturer) ---
 add_library(AppGraphics STATIC 
     src/GraphicsManager.cpp 
     src/GraphicsManager.h
     src/RuntimeState.cpp
     src/RuntimeState.h
+    src/WindowCapturer.mm   # Added .mm file
+    src/WindowCapturer.hpp  # Added .hpp file
 )
+
+# Tell CMake this is Objective-C++
+set_source_files_properties(src/WindowCapturer.mm PROPERTIES LANGUAGE CXX)
 
 # AppGraphics needs access to AssetManager, Config, Platform code and OpenCV
 target_link_libraries(AppGraphics 
@@ -96,6 +109,17 @@ target_link_libraries(AppGraphics
     ${OpenCV_LIBRARIES}
 )
 
+# Link ScreenCaptureKit frameworks to AppGraphics
+if(APPLE)
+    target_link_libraries(AppGraphics PRIVATE
+        ${SCREENCAPTURE_LIBRARY}
+        ${COREMEDIA_LIBRARY}
+        ${COREVIDEO_LIBRARY}
+        ${COREFOUNDATION_LIBRARY}
+        ${FOUNDATION_LIBRARY}
+    )
+endif()
+
 # --- Main Executable ---
 add_executable(VisualHive src/main.cpp)
 
@@ -104,7 +128,7 @@ target_link_libraries(VisualHive PRIVATE
     AssetManager
     AbletonLinkManager
     PlatformSpecificCode
-    AppGraphics          # Link the new library
+    AppGraphics
     ${OpenCV_LIBRARIES}
     Ableton::Link
 )
@@ -122,5 +146,6 @@ if(APPLE)
         ${APPLICATIONSERVICES_LIBRARY}
         ${COREAUDIO_LIBRARY} 
         ${AUDIOTOOLBOX_LIBRARY}
+        ${COREFOUNDATION_LIBRARY}
     )
 endif()
