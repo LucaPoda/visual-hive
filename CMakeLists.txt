@@ -109,6 +109,14 @@ set(RTAUDIO_API_ALSA OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(rtaudio)
 
+# --- 8. Fetch BTrack (Beat Tracking) ---
+FetchContent_Declare(
+  btrack
+  GIT_REPOSITORY https://github.com/adamstark/BTrack.git
+  GIT_TAG        master
+)
+FetchContent_MakeAvailable(btrack)
+
 # --- macOS Frameworks ---
 if(APPLE)
     find_library(COREGRAPHICS_LIBRARY CoreGraphics)
@@ -150,8 +158,13 @@ target_include_directories(AbletonLinkManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 # --- Audio DSP ---
 add_library(AudioAnalyzer STATIC src/AudioAnalyzer.cpp src/AudioAnalyzer.h)
-target_link_libraries(AudioAnalyzer PRIVATE rtaudio)
-target_include_directories(AudioAnalyzer PUBLIC ${rtaudio_SOURCE_DIR})
+# Colleghiamo RtAudio e BTrack all'Analyzer
+target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack)
+target_include_directories(AudioAnalyzer PUBLIC 
+    ${rtaudio_SOURCE_DIR} 
+    ${btrack_SOURCE_DIR}/src
+    ${btrack_SOURCE_DIR}/libs/kiss_fft130
+)
 
 # --- AppGraphics (GraphicsManager + RuntimeState) ---
 add_library(AppGraphics STATIC 

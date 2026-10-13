@@ -6,6 +6,8 @@
 #include <complex>
 #include <string>
 #include <deque>
+#include <memory>
+#include "BTrack.h" // Inclusione della libreria BTrack
 
 struct AudioMetrics {
     float rms = 0.0f;
@@ -22,6 +24,7 @@ struct AudioMetrics {
     float bandHigh = 0.0f;     // 4000+ Hz
     
     float deltaIntensity = 0.0f; // Progression coefficient
+    bool isBeat = false;         // Flag istantaneo che vale true solo nel frame del battito
 };
 
 struct AudioDeviceInfo {
@@ -50,26 +53,26 @@ private:
     std::mutex metricsMutex;
     AudioMetrics currentMetrics;
 
+    // --- BTrack ---
+    std::unique_ptr<BTrack> btrack;
+    std::vector<double> btrackBuffer; // BTrack richiede array di double
+
     // DSP State
     unsigned int sampleRate = 44100;
     std::vector<float> previousMagnitudes;
-    std::vector<double> peakTimes;
-    double lastOnsetEnergy = 0.0;
     
     unsigned int currentDeviceId = 0;
     
     // Stabilizzazione e Normalizzazione
     float smoothedDelta = 0.0f;
     float maxBandEnergies[6] = {0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f}; 
-    float maxFlux = 0.001f; // Per normalizzare lo Spectral Flux
+    float maxFlux = 0.001f;
 
-    // Struttura per lo storico istantaneo
     struct InstantBands {
         float subBass, bass, lowMid, mid, highMid, high;
         float rms;
         float flux;
     };
     
-    // Buffer circolare per mantenere gli ultimi ~10 secondi di audio
     std::deque<InstantBands> bandHistory;
 };

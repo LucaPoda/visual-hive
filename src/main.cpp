@@ -42,7 +42,10 @@ int main() {
 
     // Inizializza e avvia il thread DSP Audio
     AudioAnalyzer audioAnalyzer;
-    // audioAnalyzer.start();
+    audioAnalyzer.start();
+
+    // Wait for a moment to ensure the audio thread is running and capturing data
+    std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 
     try {
         RuntimeState state(assetManager);
