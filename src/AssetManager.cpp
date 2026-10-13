@@ -162,10 +162,14 @@ const cv::Mat Background::get_first_frame() const {
 bool Background::open() {
     if (this->type == VIDEO_LOOP) {
         this->video_loop_cap.open(this->get_background_path().value());
+        
+        // RESET timer e cache quando il video viene aperto
+        this->lastVideoFrameTime = 0; 
+        this->currentVideoFrame.release();
+        
         return this->video_loop_cap.isOpened();
     }
     else if (this->type == WINDOW_CAPTURE) {
-        // NEW: Start the background capture stream
         if (this->captureWindowId != -1) {
             startWindowCapture(this->captureWindowId);
             return true;
@@ -192,25 +196,56 @@ void Background::close() {
 
 cv::Mat Background::get_next_frame() {
     if (this->type == VIDEO_LOOP) {
-        cv::Mat frame;
-        this->video_loop_cap >> frame;
-
-        if (frame.empty()) { // loop the video when the end is reached
-            this->video_loop_cap.set(cv::CAP_PROP_POS_FRAMES, 0);
-            this->video_loop_cap >> frame;
-            if (frame.empty()) {
-                std::cerr << "Error: Could not loop video. Exiting.\n";
-                exit(1);
+        long long currentTick = cv::getTickCount();
+        
+        // Se è il primissimo frame o la cache è vuota, estraiamo forzatamente un frame
+        if (lastVideoFrameTime == 0 || currentVideoFrame.empty()) {
+            this->video_loop_cap >> currentVideoFrame;
+            
+            // Sicurezza: se il video è vuoto o finito subito, loop
+            if (currentVideoFrame.empty()) {
+                this->video_loop_cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+                this->video_loop_cap >> currentVideoFrame;
             }
+            
+            lastVideoFrameTime = currentTick;
+            return currentVideoFrame.clone();
         }
-        return frame;
+
+        // Calcola i millisecondi trascorsi dall'ultimo frame prelevato
+        double elapsedTime_ms = (currentTick - lastVideoFrameTime) * 1000.0 / cv::getTickFrequency();
+        
+        // Ottieni gli FPS originali del video (se fallisce, fallback a 30 FPS)
+        double target_fps = this->get_fps();
+        if (target_fps <= 0) target_fps = 30.0;
+        
+        double frameDuration_ms = 1000.0 / target_fps;
+
+        // Estrai un nuovo frame SOLO se è passato il tempo necessario per questo specifico video
+        if (elapsedTime_ms >= frameDuration_ms) {
+            this->video_loop_cap >> currentVideoFrame;
+
+            // Se la lettura fallisce (fine del video), riavvolgi (Loop)
+            if (currentVideoFrame.empty()) {
+                this->video_loop_cap.set(cv::CAP_PROP_POS_FRAMES, 0);
+                this->video_loop_cap >> currentVideoFrame;
+                if (currentVideoFrame.empty()) {
+                    std::cerr << "Error: Could not loop video. Exiting.\n";
+                    exit(1);
+                }
+            }
+            // Aggiorna il timer all'istante di estrazione di questo nuovo frame
+            lastVideoFrameTime = currentTick;
+        }
+
+        // Restituisci la cache (clone per sicurezza in modo che filtri e blending non sporchino la cache)
+        return currentVideoFrame.clone();
     }
     else if (this->type == WINDOW_CAPTURE) {
         cv::Mat frame = getLatestWindowFrame();
 
         if (frame.empty()) {
-            // Fallback: If the stream hasn't pushed a frame yet, or the window closed, 
-            // return a blank black frame to prevent OpenCV from crashing.
+            // Fallback: se la cattura finestra fallisce, nero solido
             return this->get_solid_color_frame(1920, 1080, cv::Scalar(0,0,0));
         }
         
@@ -219,7 +254,6 @@ cv::Mat Background::get_next_frame() {
         cv::threshold(gray, mask, 0, 255, cv::THRESH_BINARY);
         cv::Rect contentBox = cv::boundingRect(mask);
         
-        // Return the tightly cropped window
         return frame(contentBox);
     }
     else {

@@ -37,6 +37,9 @@ class Background {
     std::string asset_source; // HEX color or file path
     std::vector<int64_t> foregroundColor;
     
+    long long lastVideoFrameTime = 0;
+    cv::Mat currentVideoFrame;
+
     BackgroundType type;
     EnergyLevel energyLevel = LOW; // Default to LOW
     bool forceNoForeground = false;

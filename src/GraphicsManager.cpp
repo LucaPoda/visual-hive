@@ -1,5 +1,6 @@
 #include "GraphicsManager.h"
 #include <cmath>
+#include <iostream>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -8,21 +9,232 @@
 GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& display) 
     : windowName(config.windowName), displayWidth(display.width), displayHeight(display.height) 
 {
-    // 1. Create a resizable window
-    cv::namedWindow(windowName, cv::WINDOW_NORMAL);
+    // --- 1. Setup Iniziale GLFW ---
+    if (!glfwInit()) {
+        std::cerr << "[ERROR] Impossibile inizializzare GLFW!" << std::endl;
+        exit(1);
+    }
     
-    // 2. Move it to the target display (e.g., the external projector/screen)
-    cv::moveWindow(windowName, display.x, display.y);
-    
-    // 3. Resize it to the display's resolution
-    cv::resizeWindow(windowName, displayWidth, displayHeight);
-    
-    // 4. Force TRUE fullscreen (This overrides the macOS menu bar and dock!)
-    cv::setWindowProperty(windowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 2);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+#ifdef __APPLE__
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); 
+#endif
+
+    // --- 2. Finestra di Regia (UI) ---
+    uiWindow = glfwCreateWindow(1280, 720, "Visual-Hive - Regia / Dashboard", NULL, NULL);
+    if (!uiWindow) {
+        glfwTerminate();
+        std::cerr << "[ERROR] Impossibile creare la finestra di regia GLFW!" << std::endl;
+        exit(1);
+    }
+
+    // --- 3. Finestra del Proiettore ---
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); 
+    // Il 5° parametro (uiWindow) permette alle due finestre di condividere lo stesso contesto OpenGL
+    projectorWindow = glfwCreateWindow(displayWidth, displayHeight, windowName.c_str(), NULL, uiWindow);
+    if (!projectorWindow) {
+        glfwTerminate();
+        std::cerr << "[ERROR] Impossibile creare la finestra del proiettore GLFW!" << std::endl;
+        exit(1);
+    }
+    glfwSetWindowPos(projectorWindow, display.x, display.y);
+
+    // --- 4. Configurazione Contesto e V-Sync ---
+    glfwMakeContextCurrent(uiWindow);
+    glfwSwapInterval(1); // Abilita V-Sync
+
+    // --- 5. Inizializza OpenGL Pipeline per il proiettore ---
+    setupProjectorQuad();
+
+    // --- 6. Setup Dear ImGui ---
+    glfwMakeContextCurrent(uiWindow); // Riporta il contesto alla UI
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+    ImGui::StyleColorsDark();
+
+    ImGui_ImplGlfw_InitForOpenGL(uiWindow, true);
+    ImGui_ImplOpenGL3_Init("#version 150"); 
 }
 
 GraphicsManager::~GraphicsManager() {
-    cv::destroyAllWindows();
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
+    if (liveTextureID != 0) glDeleteTextures(1, &liveTextureID);
+    if (cueTextureID != 0) glDeleteTextures(1, &cueTextureID);
+    if (projectorTexID != 0) glDeleteTextures(1, &projectorTexID);
+
+    glDeleteVertexArrays(1, &quadVAO);
+    glDeleteBuffers(1, &quadVBO);
+    glDeleteProgram(shaderProgram);
+
+    glfwDestroyWindow(projectorWindow);
+    glfwDestroyWindow(uiWindow);
+    glfwTerminate();
+}
+
+void GraphicsManager::setupProjectorQuad() {
+    glfwMakeContextCurrent(projectorWindow);
+
+    const char* vShader = "#version 150\n in vec2 pos; in vec2 tex; out vec2 vTex; void main() { vTex=tex; gl_Position=vec4(pos,0.0,1.0); }";
+    const char* fShader = "#version 150\n in vec2 vTex; out vec4 color; uniform sampler2D texMap; void main() { color=texture(texMap,vec2(vTex.x, 1.0-vTex.y)); }";
+    
+    auto compile = [](GLuint type, const char* src) {
+        GLuint s = glCreateShader(type); 
+        glShaderSource(s, 1, &src, nullptr); 
+        glCompileShader(s); 
+        return s;
+    };
+    
+    GLuint vs = compile(GL_VERTEX_SHADER, vShader);
+    GLuint fs = compile(GL_FRAGMENT_SHADER, fShader);
+    shaderProgram = glCreateProgram(); 
+    glAttachShader(shaderProgram, vs); 
+    glAttachShader(shaderProgram, fs); 
+    glLinkProgram(shaderProgram);
+
+    // PosX, PosY, TexU, TexV
+    float vertices[] = { 
+        -1.0f, -1.0f,  0.0f, 0.0f,  
+         1.0f, -1.0f,  1.0f, 0.0f,  
+         1.0f,  1.0f,  1.0f, 1.0f,  
+        -1.0f,  1.0f,  0.0f, 1.0f 
+    }; 
+    
+    glGenVertexArrays(1, &quadVAO); 
+    glGenBuffers(1, &quadVBO);
+    glBindVertexArray(quadVAO); 
+    glBindBuffer(GL_ARRAY_BUFFER, quadVBO);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+    
+    GLint posAttrib = glGetAttribLocation(shaderProgram, "pos");
+    glEnableVertexAttribArray(posAttrib);
+    glVertexAttribPointer(posAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), 0);
+    
+    GLint texAttrib = glGetAttribLocation(shaderProgram, "tex");
+    glEnableVertexAttribArray(texAttrib);
+    glVertexAttribPointer(texAttrib, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+}
+
+void GraphicsManager::UpdateGLTexture(const cv::Mat& mat, GLuint& textureID) {
+    if (mat.empty()) return;
+
+    cv::Mat rgbaMat;
+    cv::cvtColor(mat, rgbaMat, cv::COLOR_BGR2RGBA);
+
+    if (textureID == 0) {
+        glGenTextures(1, &textureID);
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, rgbaMat.cols, rgbaMat.rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaMat.ptr());
+    } else {
+        glBindTexture(GL_TEXTURE_2D, textureID);
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, rgbaMat.cols, rgbaMat.rows, GL_RGBA, GL_UNSIGNED_BYTE, rgbaMat.ptr());
+    }
+}
+
+void GraphicsManager::beginDashboard() {
+    glfwMakeContextCurrent(uiWindow);
+    glfwPollEvents();
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+}
+
+void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm) {
+    glfwMakeContextCurrent(uiWindow);
+
+    UpdateGLTexture(liveFrame, liveTextureID);
+    UpdateGLTexture(cueFrame, cueTextureID);
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
+    
+    ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
+
+    ImGui::Text("=== SISTEMA DI REGIA VJ ===");
+    ImGui::Separator();
+    
+    float previewWidth = (ImGui::GetContentRegionAvail().x / 2.0f) - 10.0f;
+    float previewHeight = previewWidth * ((float)displayHeight / (float)displayWidth);
+
+    ImGui::BeginChild("Previews", ImVec2(0, previewHeight + 40), true);
+    ImGui::Columns(2, "PreviewColumns", false);
+    
+    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CUE (PREVIEW)");
+    if (cueTextureID != 0) ImGui::Image((void*)(intptr_t)cueTextureID, ImVec2(previewWidth, previewHeight));
+    
+    ImGui::NextColumn();
+
+    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "LIVE (ON AIR)");
+    if (liveTextureID != 0) ImGui::Image((void*)(intptr_t)liveTextureID, ImVec2(previewWidth, previewHeight));
+
+    ImGui::Columns(1);
+    ImGui::EndChild();
+
+    ImGui::BeginChild("Telemetry", ImVec2(0, 0), true);
+    ImGui::Text("Telemetria e Stato Sistema:");
+    ImGui::Separator();
+    ImGui::Text("Ableton Link: %s (BPM: %.1f)", state.linkEnabled ? "ON" : "OFF", bpm);
+    ImGui::Text("Auto Mode: %s", state.isAutoMode ? "ON" : "OFF");
+    ImGui::Text("Bounce Effect: %s", state.isBounceActive ? "ON" : "OFF");
+    
+    if (ImGui::Button("Transizione CUE -> LIVE (INVIO)")) {
+        state.transitionCueToLive();
+    }
+    ImGui::EndChild();
+    ImGui::End();
+
+    ImGui::Render();
+    int display_w, display_h;
+    glfwGetFramebufferSize(uiWindow, &display_w, &display_h);
+    glViewport(0, 0, display_w, display_h);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+    glfwSwapBuffers(uiWindow);
+}
+
+void GraphicsManager::showLive(const cv::Mat& frame) {
+    if (frame.empty()) return;
+
+    // Sposta il controllo OpenGL sulla finestra del proiettore
+    glfwMakeContextCurrent(projectorWindow);
+
+    // Aggiorna la memoria video
+    UpdateGLTexture(frame, projectorTexID);
+
+    // Renderizza il quad a tutto schermo usando il nostro shader
+    int display_w, display_h;
+    glfwGetFramebufferSize(projectorWindow, &display_w, &display_h);
+    glViewport(0, 0, display_w, display_h);
+    
+    glClear(GL_COLOR_BUFFER_BIT);
+    glUseProgram(shaderProgram);
+    
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, projectorTexID);
+    glUniform1i(glGetUniformLocation(shaderProgram, "texMap"), 0);
+
+    glBindVertexArray(quadVAO);
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+    // Manda a schermo
+    glfwSwapBuffers(projectorWindow);
+
+    // Riporta il controllo alla finestra Regia per il prossimo giro del loop
+    glfwMakeContextCurrent(uiWindow);
+}
+
+bool GraphicsManager::shouldCloseUI() const {
+    return glfwWindowShouldClose(uiWindow) || glfwWindowShouldClose(projectorWindow);
 }
 
 cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor) {
@@ -45,44 +257,32 @@ cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int tar
     int xOffset = (newWidth - targetWidth) / 2;
     int yOffset = (newHeight - targetHeight) / 2;
     
-    // Safety clamp to prevent OpenCV out-of-bounds assertions
     if (xOffset < 0) xOffset = 0;
     if (yOffset < 0) yOffset = 0;
 
     cv::Rect cropRegion(xOffset, yOffset, targetWidth, targetHeight);    
-    // 6. Return the perfectly cropped frame
     return resizedFrame(cropRegion).clone();
 }
 
 double GraphicsManager::calculateBounceScale(RuntimeState& state, double currentBeat, double tempo, std::chrono::microseconds now) {
     double scale = 1.0;
 
-    // 1. Detect Beat Change
-    // We must update lastBeat regardless of bounce state to keep sync
     if (std::floor(currentBeat) > state.lastBeat) {
         state.lastBeat = std::floor(currentBeat);
-        
-        // Only trigger a NEW animation if the user actually wants bounce
         if (state.isBounceActive) {
             state.isAnimating = true;
             state.animationStartTime = now;
         }
     }
 
-    // 2. Process Animation Logic
-    // This runs if an animation is currently correctly active. 
-    // If user turns off bounce mid-beat, this allows the current bounce to finish gracefully 
-    // before stopping (because isAnimating will remain true until progress >= 1.0).
     if (state.isAnimating) {
         auto elapsed = now - state.animationStartTime;
-        double beatDuration = (60.0 / tempo) * 1000000.0; // microseconds
+        double beatDuration = (60.0 / tempo) * 1000000.0;
         double progress = static_cast<double>(elapsed.count()) / beatDuration;
 
         if (progress < 1.0) {
-            // Sine wave bounce: 1.0 -> 1.2 -> 1.0
             scale = 1.0 + 0.2 * std::sin((progress + 0.75) * (M_PI));
         } else {
-            // Animation finished
             state.isAnimating = false;
         }
     }
@@ -96,28 +296,18 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
     if (state.activeBackground.get_type() == WINDOW_CAPTURE) {
         if (frame.empty()) {
             state.captureFailCount++;
-            std::cout << "[WARNING] Capture failed. Attempt " << state.captureFailCount << " to reconnect...\n";
-            
-            // Try to reconnect on the spot and grab a new frame immediately
             if (state.captureFailCount < 3) {
                 state.activeBackground.close();
                 state.activeBackground.open();
                 frame = state.activeBackground.get_next_frame(); 
             }
-            
-            // If it STILL failed after our retries, fallback to the default config
             if (frame.empty() && state.captureFailCount >= 3) {
-                std::cout << "[ERROR] Window capture lost. Falling back to default.\n";
-                
-                // Load your defaults (adjust getter names to match your AssetManager)
                 state.activeBackground = assetMgr.getDefaultBackground().value();
                 state.activeForeground = assetMgr.getDefaultForeground().value();
-                
-                state.captureFailCount = 0; // Reset counter
-                frame = state.activeBackground.get_next_frame(); // Grab safe frame
+                state.captureFailCount = 0; 
+                frame = state.activeBackground.get_next_frame();
             }
         } else {
-            // Stream is healthy, reset the fail counter
             state.captureFailCount = 0;
         }
     }
@@ -125,7 +315,6 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
     cv::Mat outputFrame = scaleToFit(frame, displayWidth, displayHeight);
 
     if (!state.activeBackground.get_force_no_foreground()) {
-        // Only blend if allowed
         outputFrame = assetMgr.blend(
             outputFrame, 
             state.activeForeground.get_next_frame(), 
@@ -138,21 +327,16 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
     return outputFrame;
 }
 
-// Aggiungi in GraphicsManager.cpp sotto composeFrame
-
 cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
-    // 1. Determina quale background usare per la preview
     Background& bgToUse = state.cueBackground.has_value() ? state.cueBackground.value() : state.activeBackground;
     cv::Mat bgFrame = bgToUse.get_next_frame();
 
     if (bgFrame.empty()) {
-        // Fallback di base se il frame è vuoto (es. window capture non ancora pronto)
         bgFrame = cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(50, 50, 50));
     }
 
     cv::Mat outputFrame = scaleToFit(bgFrame, displayWidth, displayHeight);
 
-    // 2. Determina quale foreground usare per la preview
     if (!bgToUse.get_force_no_foreground()) {
         Foreground& fgToUse = state.cueForeground.has_value() ? state.cueForeground.value() : state.activeForeground;
         cv::Mat fgFrame = fgToUse.get_next_frame();
@@ -170,8 +354,8 @@ cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& asse
     return outputFrame;
 }
 
-cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm) {
-    if (!isSpaceDown()) {
+cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm, bool isSpacePressed) {
+    if (!isSpacePressed) {
         state.nextStrobeTime = std::nullopt; 
         return composedFrame;
     }
@@ -193,24 +377,4 @@ cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& 
     }
 
     return composedFrame;
-}
-
-void GraphicsManager::show(const cv::Mat& frame) {
-    cv::imshow(windowName, frame);
-    cv::imshow("Laptop_Monitor_Preview", frame);
-}
-
-int GraphicsManager::enforceFramePacing(RuntimeState& state) {
-    long long currentTick = cv::getTickCount();
-    double elapsedTime_ms = (currentTick - state.lastFrameTime) * 1000.0 / cv::getTickFrequency();
-    
-    double fps = state.activeBackground.get_fps();
-    if (fps <= 0) fps = 30.0;
-
-    int delay_ms = static_cast<int>(1000.0 / fps - elapsedTime_ms);
-    if (delay_ms < 1) delay_ms = 1;
-
-    int key = cv::waitKey(delay_ms);
-    state.lastFrameTime = cv::getTickCount(); // Update for next loop
-    return key;
 }

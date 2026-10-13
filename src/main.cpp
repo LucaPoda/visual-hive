@@ -28,25 +28,6 @@ std::string getEnergyLabel(EnergyLevel level) {
     }
 }
 
-// Converte i simboli generati dallo SHIFT (Layout ITA e US) nel loro numero/carattere base
-int normalizeKey(int key) {
-    switch (key) {
-        // Layout ITA e US
-        case '!': return '1';
-        case '"': return '2'; // ITA
-        case 163: return '3'; // ITA (£ - Nota: a volte gestito come multi-byte, ma 163 è il Latin-1)
-        case '$': return '4';
-        case '%': return '5';
-        case '&': return '6'; // ITA/US
-        case '/': return '7'; // ITA
-        case '(': return '8'; // ITA (in US è Shift+9, gestiamolo come 8 per ITA se prevale)
-        case ')': return '9'; // ITA (in US è Shift+0)
-        case '=': return '0'; // ITA
-        // Aggiungi altri se usi layout particolari
-        default: return std::tolower(key);
-    }
-}
-
 int main() {
     // 1. Initialization
     ConfigManager configManager("config/config.json");
@@ -60,147 +41,116 @@ int main() {
 
     try {
         // 3. State & Graphics Instantiation
-        // RuntimeState automatically loads default assets and sets timestamps
         RuntimeState state(assetManager);
-        
-        // GraphicsManager handles window creation and scaling logic
         GraphicsManager graphics(config, targetDisplay);
 
         std::cout << "[INFO] System initialized. Starting loop.\n";
 
         // 4. Main Loop
-        while (true) {
-            // --- Ableton Link Data ---
-            size_t peers = link->numPeers();
+        while (!graphics.shouldCloseUI()) {
+            
+            // --- 1. START FRAME ---
+            graphics.beginDashboard();
+
+            // --- 2. INPUT HANDLING (Gestito SOLO tramite ImGui) ---
+            ImGuiIO& io = ImGui::GetIO();
+            
+            if (ImGui::IsKeyPressed(ImGuiKey_Escape)) break;
+            if (ImGui::IsKeyPressed(ImGuiKey_Enter)) state.transitionCueToLive();
+
+            if (ImGui::IsKeyPressed(ImGuiKey_M)) {
+                state.isAutoMode = !state.isAutoMode;
+                if (state.isAutoMode) state.lastSwitchBeat = link->captureAppSessionState().beatAtTime(std::chrono::microseconds(link->clock().micros()), 4); 
+            }
+            
+            if (ImGui::IsKeyPressed(ImGuiKey_J)) state.currentEnergyTarget = LOW;
+            if (ImGui::IsKeyPressed(ImGuiKey_K)) state.currentEnergyTarget = MID;
+            if (ImGui::IsKeyPressed(ImGuiKey_L)) state.currentEnergyTarget = HIGH;
+            
+            if (ImGui::IsKeyPressed(ImGuiKey_Z)) { 
+                state.linkEnabled = !state.linkEnabled;
+                link->enable(state.linkEnabled);
+                if (!state.linkEnabled) state.queuedForeground = std::nullopt;
+            }
+            
+            if (ImGui::IsKeyPressed(ImGuiKey_X)) { 
+                manualSync(link);
+                auto syncNow = std::chrono::microseconds(link->clock().micros());
+                auto syncTimeline = link->captureAppSessionState();
+                state.lastSwitchBeat = syncTimeline.beatAtTime(syncNow, 4);
+                state.nextSwitchDuration = 32;
+            }
+            
+            if (ImGui::IsKeyPressed(ImGuiKey_B)) { 
+                state.isBounceActive = !state.isBounceActive;
+            }
+
+            // Selezione Asset tramite tasti numerici e alfabetici
+            auto handleAssetMapping = [&](char keyChar) {
+                bool isShiftPressed = io.KeyShift;
+
+                auto bg = assetManager.getBackroundByPressedKey(keyChar);
+                auto fg = assetManager.getForegroundByPressedKey(keyChar);
+
+                if (bg.has_value()) {
+                    if (isShiftPressed) state.switchCueBackground(bg.value());
+                    else state.switchBackground(bg.value());
+                } 
+                if (fg.has_value()) {
+                    if (isShiftPressed) state.switchCueForeground(fg.value());
+                    else state.switchForeground(fg.value());
+                }
+            };
+
+            // Scansione tasti numerici (0-9)
+            for (int i = ImGuiKey_0; i <= ImGuiKey_9; i++) {
+                if (ImGui::IsKeyPressed((ImGuiKey)i, false)) {
+                    handleAssetMapping('0' + (i - ImGuiKey_0)); 
+                }
+            }
+            // Scansione tasti alfabetici (A-Z)
+            for (int i = ImGuiKey_A; i <= ImGuiKey_Z; i++) {
+                if (ImGui::IsKeyPressed((ImGuiKey)i, false)) {
+                    handleAssetMapping('a' + (i - ImGuiKey_A)); 
+                }
+            }
+
+            // --- 3. ABLETON LINK & LOGICA AUTO-MODE ---
             auto now = std::chrono::microseconds(link->clock().micros());
             auto timeline = link->captureAppSessionState();
             double currentBeat = timeline.beatAtTime(now, 4);
             double tempo = timeline.tempo();
 
             if (state.isAutoMode) {
-                // Check if enough beats have passed since the last switch
                 if (currentBeat - state.lastSwitchBeat >= state.nextSwitchDuration) {
-                    // Access assets via a getter (you might need to add getAssets() to AssetManager)
                     state.triggerAutoSwitch(assetManager.getAssets(), currentBeat);
                 }
             }
 
-            // --- Graphics Pipeline ---
-            // 1. Calculate animation scale (Bounce)
+            // --- 4. GRAPHICS PIPELINE ---
             double scale = graphics.calculateBounceScale(state, currentBeat, tempo, now);
 
-            // 2. Compose Frame (Get BG -> Resize -> Blend FG)
             cv::Mat outputFrame = graphics.composeFrame(state, assetManager, scale);
+            cv::Mat previewFrame;
             
-            // Crea anche il frame di CUE/Preview (per ora non applica strobo)
-            cv::Mat previewFrame = graphics.composeCueFrame(state, assetManager, scale);
-
-            // 3. Apply Strobe (if Space is held) all'output Live
-            outputFrame = graphics.applyStrobeEffect(outputFrame, state, tempo);
-
-            // 4. Render (mostriamo il live sulla finestra principale e il CUE sulla preview)
-            cv::imshow(config.windowName, outputFrame);
-            cv::imshow("Laptop_Monitor_Preview", previewFrame);
-
-            // 5. FPS Control & Input
-            int key = graphics.enforceFramePacing(state);
-
-            // --- Input Handling ---
-            // --- Input Handling ---
-            if (key == 27) break; // ESC
-            
-            if (key == 13) { // Tasto INVIO (Enter) - Transizione CUE -> LIVE
-                state.transitionCueToLive();
-                std::cout << "\n[CUE] Transizione a LIVE eseguita.\n";
-            }
-            else if (key > 0) {
-                // Rendi la gestione comandi case-insensitive per le funzioni di sistema
-                int lowerKey = std::tolower(key);
-                
-                if (lowerKey == 'm') {
-                    state.isAutoMode = !state.isAutoMode;
-                    if (state.isAutoMode) {
-                        state.lastSwitchBeat = currentBeat; 
-                        std::cout << std::endl << "[AUTO] Enabled. Energy: " << state.currentEnergyTarget << "\n";
-                    } else {
-                        std::cout << std::endl << "[AUTO] Disabled.\n";
-                    }
-                }
-                else if (lowerKey == 'j') {
-                    state.currentEnergyTarget = LOW;
-                }
-                else if (lowerKey == 'k') {
-                    state.currentEnergyTarget = MID;
-                }
-                else if (lowerKey == 'l') { 
-                    state.currentEnergyTarget = HIGH;
-                }
-                else if (lowerKey == 'z') { 
-                    state.linkEnabled = !state.linkEnabled;
-                    link->enable(state.linkEnabled);
-                    std::cout << std::endl << "[LINK] Set " << (state.linkEnabled ? "enabled" : "disabled") << ".\n";
-                    if (!state.linkEnabled) state.queuedForeground = std::nullopt;
-                }
-                else if (lowerKey == 'x') { 
-                    manualSync(link);
-                    auto syncNow = std::chrono::microseconds(link->clock().micros());
-                    auto syncTimeline = link->captureAppSessionState();
-                    double syncedBeat = syncTimeline.beatAtTime(syncNow, 4);
-                    state.lastSwitchBeat = syncedBeat;
-                    state.nextSwitchDuration = 32;
-                    std::cout << std::endl << "[AUTO] Counter reset. Next switch in 32 beats.\n";
-                }
-                else if (lowerKey == 'b') { 
-                    state.isBounceActive = !state.isBounceActive;
-                }
-                else { 
-                    // Asset Switching: usa il check di sistema per lo Shift
-                    bool isShiftPressed = isShiftDown() || std::isupper(key);
-                    int assetKey = normalizeKey(key); 
-                    
-                    auto bg = assetManager.getBackroundByPressedKey(assetKey);
-                    auto fg = assetManager.getForegroundByPressedKey(assetKey);
-
-                    if (bg.has_value()) {
-                        if (isShiftPressed) {
-                            state.switchCueBackground(bg.value());
-                        } else {
-                            state.switchBackground(bg.value());
-                        }
-                    } 
-                    else if (fg.has_value()) {
-                        if (isShiftPressed) {
-                            state.switchCueForeground(fg.value());
-                        } else {
-                            state.switchForeground(fg.value()); // Cambio istantaneo LIVE
-                        }
-                    }
-                }
-            }
-            
-            // --- Dashboard Output ---
-            // Calculate beats remaining for auto switch
-            int beatsRemaining = 0;
-            if (state.isAutoMode) {
-                beatsRemaining = state.nextSwitchDuration - static_cast<int>(currentBeat - state.lastSwitchBeat);
-                if (beatsRemaining < 0) beatsRemaining = 0;
-            }
-
-            std::cout << "\r" 
-                      << "[RUNTIME] LINK:" << (state.linkEnabled ? "ON" : "OFF") << " - " << peers << " - " << std::fixed << std::setprecision(1) << tempo 
-                      << " | AUTO: " << (state.isAutoMode ? "ON" : "OFF");
-            
-            if (state.isAutoMode) {
-                std::cout << " |" << std::setw(6) << std::left << getEnergyLabel(state.currentEnergyTarget) 
-                          << "| NEXT IN:" << std::setw(3) << beatsRemaining;
+            if (state.hasActiveCue()) {
+                previewFrame = graphics.composeCueFrame(state, assetManager, scale);
             } else {
-                std::cout << "|------|-------";
+                previewFrame = outputFrame; 
             }
 
-            std::cout << "  BOUNCE: " << (state.isBounceActive ? "ON" : "OFF")
-                      << "  BG: [" << state.activeBackground.get_key() << "]"
-                      << "  FG: [" << (state.activeForeground.get_foreground_path()) << "]"
-                      << "      " << std::flush; // Extra spaces to clear trailing characters
+            // Applica strobo usando la barra spaziatrice letta da ImGui
+            bool isSpacePressed = ImGui::IsKeyDown(ImGuiKey_Space);
+            outputFrame = graphics.applyStrobeEffect(outputFrame, state, tempo, isSpacePressed);
+
+            // --- 5. END FRAME (Dashboard Rendering) ---
+            graphics.endDashboard(outputFrame, previewFrame, state, tempo);
+            
+            // --- 6. AGGIORNA PROIETTORE ---
+            // Renderizza direttamente il frame sulla GPU usando la seconda finestra GLFW
+            graphics.showLive(outputFrame);
+            
+            // Nota: graphics.enforceFramePacing() è stato rimosso definitivamente
         }
 
     } catch (const std::exception& e) {

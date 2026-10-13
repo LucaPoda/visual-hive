@@ -6,8 +6,14 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 add_compile_options(-Wno-deprecated-declarations)
 
-# --- 1. Fetch nlohmann/json ---
+# Silenzia il warning per il fetch di repository senza CMakeLists (come ImGui)
+if(POLICY CMP0169)
+    cmake_policy(SET CMP0169 OLD)
+endif()
+
 include(FetchContent)
+
+# --- 1. Fetch nlohmann/json ---
 FetchContent_Declare(
   json_library
   GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -29,20 +35,62 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/Ableton/link.git
   GIT_TAG        Link-3.0.6
 )
-FetchContent_GetProperties(ableton_link)
-if(NOT ableton_link_POPULATED)
-  FetchContent_Populate(ableton_link)
-endif()
+
+# --- DISABILITA LA COMPILAZIONE DI ESEMPI E TEST DI ABLETON ---
+set(LINK_BUILD_QT_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LINK_BUILD_AUDIO_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+
+# Usa MakeAvailable invece del vecchio Populate per evitare il warning
+FetchContent_MakeAvailable(ableton_link)
 
 # Setup Ableton::Link
 include(${ableton_link_SOURCE_DIR}/AbletonLinkConfig.cmake)
 target_compile_definitions(Ableton::Link INTERFACE ASIO_STANDALONE LINK_PLATFORM_ASIO=1)
 target_include_directories(Ableton::Link INTERFACE ${asio_SOURCE_DIR}/asio/include)
 
-# Find OpenCV
+# --- 4. Find OpenCV e OpenGL ---
 find_package(OpenCV REQUIRED)
+find_package(OpenGL REQUIRED)
 
-# macOS Frameworks
+# --- 5. Fetch GLFW (Risolve l'errore del find_package mancante) ---
+FetchContent_Declare(
+  glfw
+  GIT_REPOSITORY https://github.com/glfw/glfw.git
+  GIT_TAG        3.3.8
+)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(glfw)
+
+# --- 6. Fetch Dear ImGui ---
+FetchContent_Declare(
+  imgui
+  GIT_REPOSITORY https://github.com/ocornut/imgui.git
+  GIT_TAG        v1.90.4
+)
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+  FetchContent_Populate(imgui)
+endif()
+
+# Compila ImGui e i suoi backend in una libreria statica
+add_library(imgui STATIC
+    ${imgui_SOURCE_DIR}/imgui.cpp
+    ${imgui_SOURCE_DIR}/imgui_draw.cpp
+    ${imgui_SOURCE_DIR}/imgui_tables.cpp
+    ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+    ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(imgui PUBLIC 
+    ${imgui_SOURCE_DIR} 
+    ${imgui_SOURCE_DIR}/backends
+)
+target_link_libraries(imgui PRIVATE glfw OpenGL::GL)
+
+# --- macOS Frameworks ---
 if(APPLE)
     find_library(COREGRAPHICS_LIBRARY CoreGraphics)
     find_library(APPLICATIONSERVICES_LIBRARY ApplicationServices)
@@ -81,7 +129,7 @@ target_link_libraries(AbletonLinkManager
 ) 
 target_include_directories(AbletonLinkManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 
-# --- NEW: AppGraphics (GraphicsManager + RuntimeState) ---
+# --- AppGraphics (GraphicsManager + RuntimeState) ---
 add_library(AppGraphics STATIC 
     src/GraphicsManager.cpp 
     src/GraphicsManager.h
@@ -89,12 +137,15 @@ add_library(AppGraphics STATIC
     src/RuntimeState.h
 )
 
-# AppGraphics needs access to AssetManager, Config, Platform code and OpenCV
+# AppGraphics ha bisogno di AssetManager, Config, Platform code, OpenCV e ImGui
 target_link_libraries(AppGraphics 
-    PRIVATE
+    PUBLIC
     AssetManager
     ConfigManager
     PlatformSpecificCode
+    imgui                 
+    glfw                  
+    OpenGL::GL            
     ${OpenCV_LIBRARIES}
 )
 
@@ -106,7 +157,7 @@ target_link_libraries(VisualHive PRIVATE
     AssetManager
     AbletonLinkManager
     PlatformSpecificCode
-    AppGraphics          # Link the new library
+    AppGraphics          
     ${OpenCV_LIBRARIES}
     Ableton::Link
 )

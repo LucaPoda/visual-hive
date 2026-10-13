@@ -6,7 +6,6 @@
 #include <random>
 #include "AssetManager.h"
 
-// Forward declaration if needed, or include strictly what is necessary
 struct RuntimeState {
     // Animation Flags
     bool isBounceActive;
@@ -17,8 +16,8 @@ struct RuntimeState {
     // Auto Mode State
     bool isAutoMode = false;         // 'm' toggles this
     EnergyLevel currentEnergyTarget = MID; // 'j', 'k', 'l' sets this
-    double lastSwitchBeat = 0.0;     // When did we last switch?
-    int nextSwitchDuration = 32;     // How many beats until next switch?
+    double lastSwitchBeat = 0.0;     
+    int nextSwitchDuration = 32;     
 
     // Timing & Beat Tracking
     double lastBeat;
@@ -43,9 +42,8 @@ struct RuntimeState {
     RuntimeState(AssetManager& assetManager);
     
     // Helper methods
-    // Helper methods
     void switchBackground(const Background& newBg);
-    void switchForeground(const Foreground& newFg); // Sostituisce queueForeground
+    void switchForeground(const Foreground& newFg);
     
     // Metodi CUE
     void switchCueBackground(const Background& newBg);
@@ -53,4 +51,7 @@ struct RuntimeState {
     
     void triggerAutoSwitch(const AssetsConfig& assets, double currentBeat);
     void transitionCueToLive();
+
+    // Metodo helper per capire se c'è un preview caricato
+    bool hasActiveCue() const;
 };
