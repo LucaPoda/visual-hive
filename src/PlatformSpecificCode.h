@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include <opencv2/opencv.hpp>
 
 struct DisplayInfo {
     int id; // A simple ID for user selection
@@ -15,3 +16,14 @@ struct DisplayInfo {
 
 DisplayInfo selectTargetDisplay();
 bool isSpaceDown();
+
+struct WindowInfo {
+    int id;
+    std::string name;
+    std::string ownerName;
+};
+
+std::vector<WindowInfo> getOpenWindows();
+void startWindowCapture(int windowID);
+void stopWindowCapture();
+cv::Mat getLatestWindowFrame();

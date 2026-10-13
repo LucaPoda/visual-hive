@@ -33,6 +33,8 @@ struct RuntimeState {
     Foreground activeForeground;
     std::optional<Foreground> queuedForeground;
 
+    int captureFailCount = 0;
+
     // Constructor
     RuntimeState(AssetManager& assetManager);
     

@@ -8,10 +8,17 @@
 GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& display) 
     : windowName(config.windowName), displayWidth(display.width), displayHeight(display.height) 
 {
+    // 1. Create a resizable window
     cv::namedWindow(windowName, cv::WINDOW_NORMAL);
-    cv::setWindowProperty(windowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FREERATIO);
+    
+    // 2. Move it to the target display (e.g., the external projector/screen)
     cv::moveWindow(windowName, display.x, display.y);
+    
+    // 3. Resize it to the display's resolution
     cv::resizeWindow(windowName, displayWidth, displayHeight);
+    
+    // 4. Force TRUE fullscreen (This overrides the macOS menu bar and dock!)
+    cv::setWindowProperty(windowName, cv::WND_PROP_FULLSCREEN, cv::WINDOW_FULLSCREEN);
 }
 
 GraphicsManager::~GraphicsManager() {
@@ -25,27 +32,26 @@ cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int tar
     int srcHeight = src.rows;
     if (srcWidth == 0 || srcHeight == 0) return cv::Mat(targetHeight, targetWidth, src.type(), bgColor);
 
-    double srcAspectRatio = static_cast<double>(srcWidth) / srcHeight;
-    double targetAspectRatio = static_cast<double>(targetWidth) / targetHeight;
+    double scaleWidth = static_cast<double>(targetWidth) / srcWidth;
+    double scaleHeight = static_cast<double>(targetHeight) / srcHeight;
+    double scaleFactor = scaleWidth;
 
-    int newWidth, newHeight;
-    if (srcAspectRatio > targetAspectRatio) {
-        newWidth = targetWidth;
-        newHeight = static_cast<int>(newWidth / srcAspectRatio);
-    } else {
-        newHeight = targetHeight;
-        newWidth = static_cast<int>(newHeight * srcAspectRatio);
-    }
-
+    int newWidth = static_cast<int>(std::ceil(srcWidth * scaleFactor));
+    int newHeight = static_cast<int>(std::ceil(srcHeight * scaleFactor));
+    
     cv::Mat resizedFrame;
     cv::resize(src, resizedFrame, cv::Size(newWidth, newHeight), 0, 0, cv::INTER_LINEAR);
 
-    cv::Mat canvas(targetHeight, targetWidth, src.type(), bgColor);
-    int xOffset = (targetWidth - newWidth) / 2;
-    int yOffset = (targetHeight - newHeight) / 2;
-    resizedFrame.copyTo(canvas(cv::Rect(xOffset, yOffset, newWidth, newHeight)));
+    int xOffset = (newWidth - targetWidth) / 2;
+    int yOffset = (newHeight - targetHeight) / 2;
+    
+    // Safety clamp to prevent OpenCV out-of-bounds assertions
+    if (xOffset < 0) xOffset = 0;
+    if (yOffset < 0) yOffset = 0;
 
-    return canvas;
+    cv::Rect cropRegion(xOffset, yOffset, targetWidth, targetHeight);    
+    // 6. Return the perfectly cropped frame
+    return resizedFrame(cropRegion).clone();
 }
 
 double GraphicsManager::calculateBounceScale(RuntimeState& state, double currentBeat, double tempo, std::chrono::microseconds now) {
@@ -86,6 +92,36 @@ double GraphicsManager::calculateBounceScale(RuntimeState& state, double current
 
 cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
     cv::Mat frame = state.activeBackground.get_next_frame();
+
+    if (state.activeBackground.get_type() == WINDOW_CAPTURE) {
+        if (frame.empty()) {
+            state.captureFailCount++;
+            std::cout << "[WARNING] Capture failed. Attempt " << state.captureFailCount << " to reconnect...\n";
+            
+            // Try to reconnect on the spot and grab a new frame immediately
+            if (state.captureFailCount < 3) {
+                state.activeBackground.close();
+                state.activeBackground.open();
+                frame = state.activeBackground.get_next_frame(); 
+            }
+            
+            // If it STILL failed after our retries, fallback to the default config
+            if (frame.empty() && state.captureFailCount >= 3) {
+                std::cout << "[ERROR] Window capture lost. Falling back to default.\n";
+                
+                // Load your defaults (adjust getter names to match your AssetManager)
+                state.activeBackground = assetMgr.getDefaultBackground().value();
+                state.activeForeground = assetMgr.getDefaultForeground().value();
+                
+                state.captureFailCount = 0; // Reset counter
+                frame = state.activeBackground.get_next_frame(); // Grab safe frame
+            }
+        } else {
+            // Stream is healthy, reset the fail counter
+            state.captureFailCount = 0;
+        }
+    }
+
     cv::Mat outputFrame = scaleToFit(frame, displayWidth, displayHeight);
 
     if (!state.activeBackground.get_force_no_foreground()) {

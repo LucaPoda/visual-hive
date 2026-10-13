@@ -1,4 +1,5 @@
 #include "AssetManager.h"
+
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -7,6 +8,8 @@
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
+
+#include "PlatformSpecificCode.h"
 
 namespace fs = std::filesystem;
 
@@ -22,7 +25,19 @@ NLOHMANN_JSON_SERIALIZE_ENUM(EnergyLevel, {
     {MANUAL, "manual"}
 })
 
-// Background conversion
+// Update Background from_json to grab app/window names if they exist
+void from_json(const nlohmann::json& j, Background& b) {
+    j.at("foreground_color").get_to(b.foregroundColor);
+    j.at("key").get_to(b.key);
+    b.energyLevel = j.value("energy_level", LOW); 
+    b.forceNoForeground = j.value("force_no_foreground", false);
+    
+    // Read window capture specific fields if they exist
+    if (j.contains("app_name")) b.set_target_app_name(j.at("app_name").get<std::string>());
+    if (j.contains("window_name")) b.set_target_window_name(j.at("window_name").get<std::string>());
+}
+
+// Update Background to_json to include app/window names
 void to_json(nlohmann::json& j, const Background& b) {
     j = nlohmann::json{
         {"foreground_color", b.foregroundColor}, 
@@ -30,15 +45,11 @@ void to_json(nlohmann::json& j, const Background& b) {
         {"energy_level", b.energyLevel},
         {"force_no_foreground", b.forceNoForeground}
     };
-}
-
-void from_json(const nlohmann::json& j, Background& b) {
-    j.at("foreground_color").get_to(b.foregroundColor);
-    j.at("key").get_to(b.key);
     
-    // Use value() to provide defaults if the field is missing in old configs
-    b.energyLevel = j.value("energy_level", LOW); 
-    b.forceNoForeground = j.value("force_no_foreground", false);
+    if (b.get_type() == WINDOW_CAPTURE) {
+        j["app_name"] = b.get_target_app_name();
+        j["window_name"] = b.get_target_window_name();
+    }
 }
 
 // Foreground conversion
@@ -64,19 +75,45 @@ void from_json(const nlohmann::json& j, Default& d) {
     j.at("foreground").get_to(d.foreground);
 }
 
-// AssetsConfig conversion
-void to_json(nlohmann::json& j, const AssetsConfig& ac) {
-    j = nlohmann::json{
-        {"backgrounds", ac.backgrounds},
-        {"default", ac.default_config},
-        {"foregrounds", ac.foregrounds}
-    };
+// Update AssetsConfig from_json to merge both into the backgrounds map
+void from_json(const nlohmann::json& j, AssetsConfig& ac) {
+    // 1. Load standard backgrounds
+    if (j.contains("backgrounds")) {
+        j.at("backgrounds").get_to(ac.get_mutable_backgrounds());
+    }
+    
+    // 2. Load window captures and merge them into the backgrounds map
+    if (j.contains("window_captures")) {
+        for (auto& [key, value] : j["window_captures"].items()) {
+            Background bg = value.get<Background>();
+            bg.set_source(WINDOW_CAPTURE, key); // Mark it as a window capture
+            ac.get_mutable_backgrounds()[key] = bg;
+        }
+    }
+    
+    j.at("default").get_to(ac.get_mutable_default_config());
+    j.at("foregrounds").get_to(ac.get_mutable_foregrounds());
 }
 
-void from_json(const nlohmann::json& j, AssetsConfig& ac) {
-    j.at("backgrounds").get_to(ac.backgrounds);
-    j.at("default").get_to(ac.default_config);
-    j.at("foregrounds").get_to(ac.foregrounds);
+// Update AssetsConfig to_json to split them back apart for saving
+void to_json(nlohmann::json& j, const AssetsConfig& ac) {
+    nlohmann::json standardBackgrounds;
+    nlohmann::json windowCaptures;
+    
+    for (const auto& [key, bg] : ac.get_backgrounds()) {
+        if (bg.get_type() == WINDOW_CAPTURE) {
+            windowCaptures[key] = bg;
+        } else {
+            standardBackgrounds[key] = bg;
+        }
+    }
+
+    j = nlohmann::json{
+        {"backgrounds", standardBackgrounds},
+        {"window_captures", windowCaptures},
+        {"default", ac.get_default_config()},
+        {"foregrounds", ac.get_foregrounds()}
+    };
 }
 
 const std::optional<cv::Scalar> Background::get_background_color() const {
@@ -125,12 +162,20 @@ const cv::Mat Background::get_first_frame() const {
 bool Background::open() {
     if (this->type == VIDEO_LOOP) {
         this->video_loop_cap.open(this->get_background_path().value());
-
         return this->video_loop_cap.isOpened();
+    }
+    else if (this->type == WINDOW_CAPTURE) {
+        // NEW: Start the background capture stream
+        if (this->captureWindowId != -1) {
+            startWindowCapture(this->captureWindowId);
+            return true;
+        } else {
+            std::cerr << "[ERROR] Window Capture requested but no window ID set.\n";
+            return false;
+        }
     }
     else {
         this->solid_color_img = this->get_solid_color_frame(1920, 1080, this->get_background_color().value());
-
         return true;
     }
 }
@@ -138,6 +183,10 @@ bool Background::open() {
 void Background::close() {
     if (this->type == VIDEO_LOOP) {
         this->video_loop_cap.release();
+    }
+    else if (this->type == WINDOW_CAPTURE) {
+        // NEW: Stop the background stream when this asset is closed
+        stopWindowCapture();
     }
 }
 
@@ -155,6 +204,23 @@ cv::Mat Background::get_next_frame() {
             }
         }
         return frame;
+    }
+    else if (this->type == WINDOW_CAPTURE) {
+        cv::Mat frame = getLatestWindowFrame();
+
+        if (frame.empty()) {
+            // Fallback: If the stream hasn't pushed a frame yet, or the window closed, 
+            // return a blank black frame to prevent OpenCV from crashing.
+            return this->get_solid_color_frame(1920, 1080, cv::Scalar(0,0,0));
+        }
+        
+        cv::Mat gray, mask;
+        cv::cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        cv::threshold(gray, mask, 0, 255, cv::THRESH_BINARY);
+        cv::Rect contentBox = cv::boundingRect(mask);
+        
+        // Return the tightly cropped window
+        return frame(contentBox);
     }
     else {
         return this->solid_color_img;
@@ -254,8 +320,49 @@ void AssetManager::loadAssetsIntoMemory() {
     Background::backgroundsPath = fs::path(appConfig.assetsDir) / "backgrounds";
     Foreground::foregroundsPath = fs::path(appConfig.assetsDir) / "foregrounds";
     
+    std::vector<WindowInfo> openWindows;
+    bool fetchedWindows = false;
+
     for (auto& [key, value] : this->assets.get_mutable_backgrounds()) {
-        if (fs::exists(Background::backgroundsPath / key)) {
+
+        if (value.get_type() == WINDOW_CAPTURE) {
+            if (!fetchedWindows) {
+                openWindows = getOpenWindows(); // Using the C++ wrapper we defined earlier
+                fetchedWindows = true;
+            }
+
+            bool windowFound = false;
+            std::string targetApp = value.get_target_app_name();
+            std::string targetWindow = value.get_target_window_name();
+
+            for (const auto& win : openWindows) {
+                // Match the app name. If a window_name is provided in JSON, match that too. 
+                // If window_name is empty, just grab the first valid window of the app!
+                std::cout << "[DEBUG] OS sees App: '" << win.ownerName << "' with Window: '" << win.name << "'\n";
+                if (win.ownerName == targetApp) {
+                    value.set_capture_window_id(win.id);
+                    windowFound = true;
+                    std::cout << "[INFO] Successfully bound window capture '" << key 
+                            << "' to ID " << win.id << " (" << win.ownerName << " - " << win.name << ")\n";
+                    break;
+                }
+            }
+
+            if (!windowFound) {
+                std::cerr << "[WARNING] Could not find open window for capture '" << key 
+                        << "' (App: " << targetApp << ", Window: " << targetWindow << "). "
+                        << "Ensure the window is open before switching to it. Opened window with similar names:\n";
+
+                for (const auto& win : openWindows) {
+                    // Match the app name. If a window_name is provided in JSON, match that too. 
+                    // If window_name is empty, just grab the first valid window of the app!
+                    if (win.ownerName.find(targetApp) != std::string::npos)
+                        std::cout << "- '" << win.ownerName << "' with Window: '" << win.name << "'\n";
+                }
+
+            }
+        }
+        else if (fs::exists(Background::backgroundsPath / key)) {
             value.set_source(VIDEO_LOOP, key);
         }
         else if (key.rfind("#", 0) == 0) {
@@ -454,3 +561,4 @@ char AssetManager::displayAndGetKey(const std::string& windowName, const cv::Mat
     cv::imshow(windowName, asset);
     return cv::waitKey(0);
 }
+

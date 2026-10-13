@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.5)
+cmake_minimum_required(VERSION 3.10)
 project(VisualHive)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -48,6 +48,8 @@ if(APPLE)
     find_library(APPLICATIONSERVICES_LIBRARY ApplicationServices)
     find_library(COREAUDIO_LIBRARY CoreAudio)       
     find_library(AUDIOTOOLBOX_LIBRARY AudioToolbox) 
+    find_library(SCREENCAPTUREKIT_LIBRARY ScreenCaptureKit)
+    find_library(COREMEDIA_LIBRARY CoreMedia)
 endif()
 
 # --- ConfigManager ---
@@ -117,10 +119,14 @@ target_include_directories(VisualHive PRIVATE
 )
 
 if(APPLE)
-    target_link_libraries(VisualHive PRIVATE 
-        ${COREGRAPHICS_LIBRARY} 
-        ${APPLICATIONSERVICES_LIBRARY}
-        ${COREAUDIO_LIBRARY} 
-        ${AUDIOTOOLBOX_LIBRARY}
+    target_sources(PlatformSpecificCode PRIVATE src/PlatformSpecificCode_mac.mm)
+    set_source_files_properties(src/PlatformSpecificCode_mac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(PlatformSpecificCode PRIVATE 
+        ${OpenCV_LIBRARIES}
+        "-framework CoreGraphics" 
+        "-framework ApplicationServices"
+        "-framework ScreenCaptureKit"
+        "-framework CoreMedia"
+        "-framework CoreVideo"
     )
 endif()

@@ -21,6 +21,7 @@ enum EnergyLevel {
 enum BackgroundType {
     VIDEO_LOOP,
     SOLID_COLOR,
+    WINDOW_CAPTURE
 };
 
 // Struct to represent a visual asset
@@ -42,6 +43,10 @@ class Background {
 
     cv::VideoCapture video_loop_cap;
     cv::Mat solid_color_img;
+
+    int captureWindowId = -1; // Store the ID of the window to capture
+    std::string targetAppName;
+    std::string targetWindowName;
 
     public:
     const std::string & get_key() const { return key; }
@@ -92,6 +97,15 @@ class Background {
 
     const bool& get_force_no_foreground() const { return forceNoForeground; }
     void set_force_no_foreground(bool value) { this->forceNoForeground = value; }
+
+    int get_capture_window_id() const { return captureWindowId; }
+    void set_capture_window_id(int id) { this->captureWindowId = id; }
+
+    const std::string& get_target_app_name() const { return targetAppName; }
+    void set_target_app_name(const std::string& name) { targetAppName = name; }
+
+    const std::string& get_target_window_name() const { return targetWindowName; }
+    void set_target_window_name(const std::string& name) { targetWindowName = name; }
 
     bool open();
     void close();
@@ -207,7 +221,7 @@ public:
     void initializeAssets();
     
     cv::Mat blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor);
-    
+
     const AssetsConfig& getAssets() const { return assets; }
 
     std::optional<Background> getDefaultBackground();
