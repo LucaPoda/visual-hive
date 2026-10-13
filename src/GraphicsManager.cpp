@@ -147,7 +147,7 @@ void GraphicsManager::beginDashboard() {
     ImGui::NewFrame();
 }
 
-void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm) {
+void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer) {
     glfwMakeContextCurrent(uiWindow);
 
     UpdateGLTexture(liveFrame, liveTextureID);
@@ -178,6 +178,11 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Columns(1);
     ImGui::EndChild();
 
+    // --- SEZIONE INFERIORE A DUE COLONNE ---
+    ImGui::BeginChild("BottomSection", ImVec2(0, 0), false);
+    ImGui::Columns(2, "BottomCols", false);
+
+    // COLONNA 1: Telemetria Originale
     ImGui::BeginChild("Telemetry", ImVec2(0, 0), true);
     ImGui::Text("Telemetria e Stato Sistema:");
     ImGui::Separator();
@@ -189,8 +194,122 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         state.transitionCueToLive();
     }
     ImGui::EndChild();
+
+    ImGui::NextColumn();
+
+    // COLONNA 2: Modulo Audio DSP (COMPLETO E AGGIORNATO)
+    ImGui::BeginChild("AudioDSP", ImVec2(0, 0), true);
+    ImGui::Text("Modulo Audio DSP:");
+    ImGui::Separator();
+    
+    AudioMetrics audioData = audioAnalyzer.getMetrics();
+    static std::vector<AudioDeviceInfo> audioDevices = audioAnalyzer.getInputDevices();
+    static std::string currentDeviceName = "Seleziona Dispositivo...";
+
+    if (currentDeviceName == "Seleziona Dispositivo..." && !audioDevices.empty()) {
+        unsigned int activeId = audioAnalyzer.getCurrentDeviceId();
+        for (const auto& dev : audioDevices) {
+            if (dev.id == activeId) currentDeviceName = dev.name;
+        }
+    }
+
+    ImGui::Text("Sorgente:");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
+    if (ImGui::BeginCombo("##AudioInput", currentDeviceName.c_str())) {
+        for (const auto& device : audioDevices) {
+            bool isSelected = (currentDeviceName == device.name);
+            if (ImGui::Selectable(device.name.c_str(), isSelected)) {
+                currentDeviceName = device.name;
+                audioAnalyzer.stop();
+                audioAnalyzer.start(device.id);
+            }
+            if (isSelected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh")) {
+        audioDevices = audioAnalyzer.getInputDevices();
+    }
+
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+    // 1. LIVE INPUT METER
+    ImGui::Text("Live Input Level (Peak):");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.2f, 0.8f, 0.2f, 1.0f)); 
+    if (audioData.peak > 0.85f) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.9f, 0.1f, 0.1f, 1.0f)); 
+    else if (audioData.peak > 0.6f) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.8f, 0.8f, 0.1f, 1.0f)); 
+    ImGui::ProgressBar(audioData.peak, ImVec2(-1.0f, 12.0f), "");
+    ImGui::PopStyleColor(audioData.peak > 0.6f ? 2 : 1);
+
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    
+    // 2. BPM E DELTA INTENSITA'
+    ImGui::Text("BPM Stimati (Sub): %.1f", audioData.bpm);
+    ImGui::Text("Delta Intensità (Trend): ");
+    ImGui::SameLine();
+    if (audioData.deltaIntensity > 0.05f) { // Soglia aumentata
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "IN CRESCENDO (+%.2f)", audioData.deltaIntensity);
+    } else if (audioData.deltaIntensity < -0.05f) { // Soglia aumentata
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "IN DISCESA (%.2f)", audioData.deltaIntensity);
+    } else {
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "STABILE (%.2f)", audioData.deltaIntensity);
+    }
+    
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+    // 3. CORE METRICS
+    ImGui::Text("Energia RMS");
+    ImGui::ProgressBar(std::min(audioData.rms * 3.0f, 1.0f), ImVec2(-1.0f, 8.0f), ""); 
+    
+    ImGui::Text("Spectral Flux (FFT)");
+    ImGui::ProgressBar(audioData.spectralFlux, ImVec2(-1.0f, 8.0f), "");
+
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+
+    // 4. ANALISI MULTIBANDA (Feature normalizzate per il KNN)
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "--- KNN Audio Features (Normalized) ---");
+
+    ImGui::Text("Sub-Bass (20-60 Hz)");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.6f, 0.2f, 0.8f, 1.0f)); 
+    ImGui::ProgressBar(audioData.bandSubBass, ImVec2(-1.0f, 6.0f), "");
+    ImGui::PopStyleColor();
+
+    ImGui::Text("Bass (60-250 Hz)");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.8f, 0.3f, 0.3f, 1.0f)); 
+    ImGui::ProgressBar(audioData.bandBass, ImVec2(-1.0f, 6.0f), "");
+    ImGui::PopStyleColor();
+
+    ImGui::Text("Low-Mid (250-500 Hz)");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.8f, 0.6f, 0.2f, 1.0f)); 
+    ImGui::ProgressBar(audioData.bandLowMid, ImVec2(-1.0f, 6.0f), "");
+    ImGui::PopStyleColor();
+
+    ImGui::Text("Mid (500-2000 Hz)");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.8f, 0.3f, 1.0f)); 
+    ImGui::ProgressBar(audioData.bandMid, ImVec2(-1.0f, 6.0f), "");
+    ImGui::PopStyleColor();
+    
+    ImGui::Text("High-Mid (2k-4k Hz)");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.2f, 0.7f, 0.8f, 1.0f)); 
+    ImGui::ProgressBar(audioData.bandHighMid, ImVec2(-1.0f, 6.0f), "");
+    ImGui::PopStyleColor();
+
+    ImGui::Text("High (4k+ Hz)");
+    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.5f, 1.0f, 1.0f)); 
+    ImGui::ProgressBar(audioData.bandHigh, ImVec2(-1.0f, 6.0f), "");
+    ImGui::PopStyleColor();
+
+    ImGui::EndChild(); // Fine AudioDSP
+
+    ImGui::Columns(1);
+    ImGui::EndChild(); // Fine BottomSection
+    
     ImGui::End();
 
+    // Rendering finale
     ImGui::Render();
     int display_w, display_h;
     glfwGetFramebufferSize(uiWindow, &display_w, &display_h);
@@ -321,7 +440,8 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
             displayWidth, 
             displayHeight, 
             state.activeForeground.get_scale() * scale, 
-            state.activeBackground.get_foreground_color()
+            state.activeBackground.get_foreground_color(),
+            state.activeForeground.get_force_original_colors() // <-- NUOVO
         );
     }
     return outputFrame;
@@ -347,7 +467,8 @@ cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& asse
             displayWidth, 
             displayHeight, 
             fgToUse.get_scale() * scale, 
-            bgToUse.get_foreground_color()
+            bgToUse.get_foreground_color(),
+            fgToUse.get_force_original_colors()
         );
     }
     

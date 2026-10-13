@@ -53,7 +53,7 @@ target_include_directories(Ableton::Link INTERFACE ${asio_SOURCE_DIR}/asio/inclu
 find_package(OpenCV REQUIRED)
 find_package(OpenGL REQUIRED)
 
-# --- 5. Fetch GLFW (Risolve l'errore del find_package mancante) ---
+# --- 5. Fetch GLFW ---
 FetchContent_Declare(
   glfw
   GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -62,6 +62,7 @@ FetchContent_Declare(
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL OFF CACHE BOOL "" FORCE) # Evita il conflitto con target 'uninstall'
 FetchContent_MakeAvailable(glfw)
 
 # --- 6. Fetch Dear ImGui ---
@@ -89,6 +90,24 @@ target_include_directories(imgui PUBLIC
     ${imgui_SOURCE_DIR}/backends
 )
 target_link_libraries(imgui PRIVATE glfw OpenGL::GL)
+
+# --- 7. Fetch RtAudio ---
+FetchContent_Declare(
+  rtaudio
+  GIT_REPOSITORY https://github.com/thestk/rtaudio.git
+  GIT_TAG        6.0.1 
+)
+# Configura CMake per RtAudio
+set(RTAUDIO_BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(RTAUDIO_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE) # Compila statico
+set(RTAUDIO_INSTALL OFF CACHE BOOL "" FORCE)           # Evita conflitto 'uninstall'
+
+# Forza la disabilitazione di API audio non necessarie (risolve l'errore 'jack non trovato')
+set(RTAUDIO_API_JACK OFF CACHE BOOL "" FORCE)
+set(RTAUDIO_API_PULSE OFF CACHE BOOL "" FORCE)
+set(RTAUDIO_API_ALSA OFF CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(rtaudio)
 
 # --- macOS Frameworks ---
 if(APPLE)
@@ -129,6 +148,11 @@ target_link_libraries(AbletonLinkManager
 ) 
 target_include_directories(AbletonLinkManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 
+# --- Audio DSP ---
+add_library(AudioAnalyzer STATIC src/AudioAnalyzer.cpp src/AudioAnalyzer.h)
+target_link_libraries(AudioAnalyzer PRIVATE rtaudio)
+target_include_directories(AudioAnalyzer PUBLIC ${rtaudio_SOURCE_DIR})
+
 # --- AppGraphics (GraphicsManager + RuntimeState) ---
 add_library(AppGraphics STATIC 
     src/GraphicsManager.cpp 
@@ -142,6 +166,7 @@ target_link_libraries(AppGraphics
     PUBLIC
     AssetManager
     ConfigManager
+    AudioAnalyzer
     PlatformSpecificCode
     imgui                 
     glfw                  
@@ -158,6 +183,7 @@ target_link_libraries(VisualHive PRIVATE
     AbletonLinkManager
     PlatformSpecificCode
     AppGraphics          
+    AudioAnalyzer      
     ${OpenCV_LIBRARIES}
     Ableton::Link
 )
@@ -179,5 +205,11 @@ if(APPLE)
         "-framework ScreenCaptureKit"
         "-framework CoreMedia"
         "-framework CoreVideo"
+    )
+    
+    # RtAudio su Mac necessita di questi frameworks
+    target_link_libraries(AudioAnalyzer PRIVATE 
+        "-framework CoreAudio" 
+        "-framework CoreFoundation"
     )
 endif()

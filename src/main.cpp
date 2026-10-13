@@ -15,6 +15,7 @@
 #include "AbletonLinkManager.h"
 #include "RuntimeState.h"
 #include "GraphicsManager.h"
+#include "AudioAnalyzer.h"
 
 namespace fs = std::filesystem;
 
@@ -39,18 +40,30 @@ int main() {
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
+    // Inizializza e avvia il thread DSP Audio
+    AudioAnalyzer audioAnalyzer;
+    // audioAnalyzer.start();
+
     try {
-        // 3. State & Graphics Instantiation
         RuntimeState state(assetManager);
         GraphicsManager graphics(config, targetDisplay);
 
         std::cout << "[INFO] System initialized. Starting loop.\n";
 
-        // 4. Main Loop
         while (!graphics.shouldCloseUI()) {
             
             // --- 1. START FRAME ---
             graphics.beginDashboard();
+
+            // --- 1.5 LEGGI AUDIO DSP ---
+            AudioMetrics audioData = audioAnalyzer.getMetrics();
+
+            // --- PANNELLO IMGUI AUDIO ---
+            ImGui::Begin("Audio DSP Analysis");
+            ImGui::Text("BPM Rilevati (Bassi): %.1f", audioData.bpm);
+            ImGui::ProgressBar(audioData.rms * 5.0f, ImVec2(-1.0f, 0.0f), "RMS"); // Moltiplicatore per visibilità
+            ImGui::ProgressBar(audioData.spectralFlux, ImVec2(-1.0f, 0.0f), "Spectral Flux");
+            ImGui::End();
 
             // --- 2. INPUT HANDLING (Gestito SOLO tramite ImGui) ---
             ImGuiIO& io = ImGui::GetIO();
@@ -144,7 +157,7 @@ int main() {
             outputFrame = graphics.applyStrobeEffect(outputFrame, state, tempo, isSpacePressed);
 
             // --- 5. END FRAME (Dashboard Rendering) ---
-            graphics.endDashboard(outputFrame, previewFrame, state, tempo);
+            graphics.endDashboard(outputFrame, previewFrame, state, tempo, audioAnalyzer);            
             
             // --- 6. AGGIORNA PROIETTORE ---
             // Renderizza direttamente il frame sulla GPU usando la seconda finestra GLFW

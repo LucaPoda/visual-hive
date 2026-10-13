@@ -20,6 +20,8 @@
 #include "PlatformSpecificCode.h"
 #include "AssetManager.h"
 #include "RuntimeState.h"
+#include "AudioAnalyzer.h"
+
 
 class GraphicsManager {
 private:
@@ -54,7 +56,7 @@ public:
     cv::Mat applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm, bool isSpacePressed);
     
     void beginDashboard();
-    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm);
+    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer);    
     
     void showLive(const cv::Mat& frame);
     

@@ -56,13 +56,15 @@ void to_json(nlohmann::json& j, const Background& b) {
 void to_json(nlohmann::json& j, const Foreground& f) {
     j = nlohmann::json{
         {"scale", f.scale},
-        {"key", f.key}
+        {"key", f.key},
+        {"force_original_colors", f.forceOriginalColors}
     };
 }
 
 void from_json(const nlohmann::json& j, Foreground& f) {
     j.at("scale").get_to(f.scale);
     j.at("key").get_to(f.key);
+    j.at("force_original_colors").get_to(f.forceOriginalColors);
 }
 
 // Default conversion
@@ -446,109 +448,99 @@ void AssetManager::loadAssetsIntoMemory() {
 }
 
 // Public method to blend foreground with alpha channel onto a background
-cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor) {
-    if (background.empty() || foregroundAsset.empty()) {
-        return background;
+cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor, bool forceOriginalColor) {
+    if (background.empty() || foregroundAsset.empty()) return background.clone();
+
+    cv::Mat result = background.clone();
+
+    // 1. Calcola nuove dimensioni
+    int newWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
+    int newHeight = static_cast<int>(foregroundAsset.rows * ((double)newWidth / foregroundAsset.cols));
+    if (newWidth <= 0 || newHeight <= 0) return result;
+
+    // 2. Resize e garanzia canale Alpha
+    cv::Mat resizedFg;
+    cv::resize(foregroundAsset, resizedFg, cv::Size(newWidth, newHeight), 0, 0, cv::INTER_AREA);
+    if (resizedFg.channels() != 4) {
+        cv::cvtColor(resizedFg, resizedFg, cv::COLOR_BGR2BGRA);
     }
 
-    cv::Mat blended = background.clone();
+    // 3. Calcolo ROI (Region of Interest) sicura
+    int xOffset = (screenWidth - newWidth) / 2;
+    int yOffset = (screenHeight - newHeight) / 2;
+    int xStart = std::max(0, xOffset);
+    int yStart = std::max(0, yOffset);
+    int xEnd = std::min(screenWidth, xOffset + newWidth);
+    int yEnd = std::min(screenHeight, yOffset + newHeight);
 
-    // Pre-process the foreground image for blending
-    cv::Mat resizedForeground;
-    cv::Mat solidColorForeground;
-    
-    int targetWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
-    double aspectRatio = static_cast<double>(foregroundAsset.rows) / foregroundAsset.cols;
-    int newHeight = static_cast<int>(targetWidth * aspectRatio);
+    int fgXStart = xStart - xOffset;
+    int fgYStart = yStart - yOffset;
+    int roiWidth = xEnd - xStart;
+    int roiHeight = yEnd - yStart;
 
-    // Adjust dimensions to fit the screen
-    if (targetWidth > screenWidth || newHeight > screenHeight) {
-        std::cout << std::endl << "[WARNING] Foreground scale " << targetWidth << "x" << newHeight << " too large. Adjusting to fit screen..." << std::endl;
-        
-        if (targetWidth > screenWidth) {
-            targetWidth = screenWidth;
-            newHeight = static_cast<int>(targetWidth * aspectRatio);
+    if (roiWidth <= 0 || roiHeight <= 0) return result;
+
+    cv::Mat bgRegion = result(cv::Rect(xStart, yStart, roiWidth, roiHeight));
+    cv::Mat fgRegion = resizedFg(cv::Rect(fgXStart, fgYStart, roiWidth, roiHeight));
+
+    // 4. Blending ultra-veloce con diramazione fuori dal ciclo
+    int targetB = foregroundColor[0];
+    int targetG = foregroundColor[1];
+    int targetR = foregroundColor[2];
+
+    if (forceOriginalColor) {
+        // PERCORSO A: Mantiene i colori originali del PNG (Lettura diretta, niente sostituzioni)
+        for (int y = 0; y < roiHeight; ++y) {
+            uchar* bgPtr = bgRegion.ptr<uchar>(y);
+            const uchar* fgPtr = fgRegion.ptr<uchar>(y);
+
+            for (int x = 0; x < roiWidth; ++x) {
+                int bgIdx = x * 3;
+                int fgIdx = x * 4;
+                uchar alpha = fgPtr[fgIdx + 3];
+                
+                if (alpha == 0) continue;
+                
+                if (alpha == 255) {
+                    bgPtr[bgIdx]     = fgPtr[fgIdx];
+                    bgPtr[bgIdx + 1] = fgPtr[fgIdx + 1];
+                    bgPtr[bgIdx + 2] = fgPtr[fgIdx + 2];
+                } else {
+                    int invAlpha = 255 - alpha;
+                    bgPtr[bgIdx]     = (fgPtr[fgIdx]     * alpha + bgPtr[bgIdx]     * invAlpha) / 255;
+                    bgPtr[bgIdx + 1] = (fgPtr[fgIdx + 1] * alpha + bgPtr[bgIdx + 1] * invAlpha) / 255;
+                    bgPtr[bgIdx + 2] = (fgPtr[fgIdx + 2] * alpha + bgPtr[bgIdx + 2] * invAlpha) / 255;
+                }
+            }
         }
-        if (newHeight > screenHeight) {
-            newHeight = screenHeight;
-            targetWidth = static_cast<int>(newHeight / aspectRatio);
-        }
-    }
-    
-    // Resize the foreground image
-    cv::resize(foregroundAsset, resizedForeground, cv::Size(targetWidth, newHeight));
-
-    // Calculate position to center the foreground at the bottom of the screen
-    int xOffset = (blended.cols - targetWidth) / 2;
-    int yOffset = (blended.rows - newHeight) / 2;
-    
-    // Create the ROI on the background image where the foreground will be placed
-    cv::Rect roi(xOffset, yOffset, targetWidth, newHeight);
-    
-    // Ensure the ROI is completely within the background image bounds
-    cv::Rect safeRoi = roi & cv::Rect(0, 0, blended.cols, blended.rows);
-    
-    if (safeRoi.empty()) {
-        // The foreground image is completely outside the background, do nothing.
-        return blended;
-    }
-
-    // Adjust the resizedForeground to match the clamped ROI dimensions if needed
-    cv::Mat adjustedForeground = resizedForeground(cv::Rect(
-        safeRoi.x - roi.x,
-        safeRoi.y - roi.y,
-        safeRoi.width,
-        safeRoi.height
-    ));
-
-    if (adjustedForeground.empty()) {
-        return blended;
-    }
-
-    if (adjustedForeground.channels() == 4) {
-        // Split the foreground into BGR and Alpha channels
-        std::vector<cv::Mat> channels;
-        cv::split(adjustedForeground, channels);
-        cv::Mat bgr = adjustedForeground.clone();
-        cv::Mat alpha = channels[3];
-
-        // Create a new foreground image with a single, custom color
-        cv::Mat solidColorForeground(adjustedForeground.size(), CV_8UC3, foregroundColor);
-
-        // Copy the solid color to the ROI using the alpha channel as a mask
-        solidColorForeground.copyTo(blended(safeRoi), alpha);
     } else {
-        // For images without an alpha channel, just copy them directly
-        adjustedForeground.copyTo(blended(safeRoi));
+        // PERCORSO B: Applica la colorazione solida
+        for (int y = 0; y < roiHeight; ++y) {
+            uchar* bgPtr = bgRegion.ptr<uchar>(y);
+            const uchar* fgPtr = fgRegion.ptr<uchar>(y);
+
+            for (int x = 0; x < roiWidth; ++x) {
+                int bgIdx = x * 3;
+                int fgIdx = x * 4;
+                uchar alpha = fgPtr[fgIdx + 3];
+                
+                if (alpha == 0) continue;
+                
+                if (alpha == 255) {
+                    bgPtr[bgIdx]     = targetB;
+                    bgPtr[bgIdx + 1] = targetG;
+                    bgPtr[bgIdx + 2] = targetR;
+                } else {
+                    int invAlpha = 255 - alpha;
+                    bgPtr[bgIdx]     = (targetB * alpha + bgPtr[bgIdx]     * invAlpha) / 255;
+                    bgPtr[bgIdx + 1] = (targetG * alpha + bgPtr[bgIdx + 1] * invAlpha) / 255;
+                    bgPtr[bgIdx + 2] = (targetR * alpha + bgPtr[bgIdx + 2] * invAlpha) / 255;
+                }
+            }
+        }
     }
 
-    lastBlendedForeground = solidColorForeground;
-    
-    // Calculate position to center the foreground
-    int xForegroundOffset = (blended.cols - lastBlendedForeground.cols) / 2;
-    int yForegroundOffset = (blended.rows - lastBlendedForeground.rows) / 2;
-    
-    cv::Rect foregroundRoi(xForegroundOffset, yForegroundOffset, lastBlendedForeground.cols, lastBlendedForeground.rows);
-    cv::Rect safeForegroundRoi = foregroundRoi & cv::Rect(0, 0, blended.cols, blended.rows);
-    
-    if (safeForegroundRoi.empty()) {
-        return blended;
-    }
-
-    adjustedForeground = lastBlendedForeground(cv::Rect(
-        safeForegroundRoi.x - foregroundRoi.x,
-        safeForegroundRoi.y - foregroundRoi.y,
-        safeForegroundRoi.width,
-        safeForegroundRoi.height
-    ));
-
-    if (adjustedForeground.empty()) {
-        return blended;
-    }
-
-    adjustedForeground.copyTo(blended(safeRoi));
-    
-    return blended;
+    return result;
 }
 
 std::optional<Background> AssetManager::getDefaultBackground() {

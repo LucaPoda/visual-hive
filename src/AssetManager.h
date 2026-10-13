@@ -132,7 +132,7 @@ class Foreground {
     double scale;
     std::string asset_source;
     std::string key;
-
+    bool forceOriginalColors = false;
 
     cv::Mat data;
 
@@ -151,6 +151,9 @@ class Foreground {
     const std::string get_foreground_path() const;
     
     const cv::Mat get_first_frame() const;
+
+    const bool& get_force_original_colors() const { return forceOriginalColors; }
+    void set_force_original_colors(bool value) { this->forceOriginalColors = value; }
 
     bool open();
     void close();
@@ -223,7 +226,7 @@ public:
     AssetManager(const AppConfig& config);
     void initializeAssets();
     
-    cv::Mat blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor);
+    cv::Mat blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor, bool forceOriginalColor = false);
 
     const AssetsConfig& getAssets() const { return assets; }
 
