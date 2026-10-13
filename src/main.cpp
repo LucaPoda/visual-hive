@@ -28,6 +28,25 @@ std::string getEnergyLabel(EnergyLevel level) {
     }
 }
 
+// Converte i simboli generati dallo SHIFT (Layout ITA e US) nel loro numero/carattere base
+int normalizeKey(int key) {
+    switch (key) {
+        // Layout ITA e US
+        case '!': return '1';
+        case '"': return '2'; // ITA
+        case 163: return '3'; // ITA (£ - Nota: a volte gestito come multi-byte, ma 163 è il Latin-1)
+        case '$': return '4';
+        case '%': return '5';
+        case '&': return '6'; // ITA/US
+        case '/': return '7'; // ITA
+        case '(': return '8'; // ITA (in US è Shift+9, gestiamolo come 8 per ITA se prevale)
+        case ')': return '9'; // ITA (in US è Shift+0)
+        case '=': return '0'; // ITA
+        // Aggiungi altri se usi layout particolari
+        default: return std::tolower(key);
+    }
+}
+
 int main() {
     // 1. Initialization
     ConfigManager configManager("config/config.json");
@@ -72,81 +91,89 @@ int main() {
 
             // 2. Compose Frame (Get BG -> Resize -> Blend FG)
             cv::Mat outputFrame = graphics.composeFrame(state, assetManager, scale);
+            
+            // Crea anche il frame di CUE/Preview (per ora non applica strobo)
+            cv::Mat previewFrame = graphics.composeCueFrame(state, assetManager, scale);
 
-            // 3. Apply Strobe (if Space is held)
+            // 3. Apply Strobe (if Space is held) all'output Live
             outputFrame = graphics.applyStrobeEffect(outputFrame, state, tempo);
 
-            // 4. Render
-            graphics.show(outputFrame);
+            // 4. Render (mostriamo il live sulla finestra principale e il CUE sulla preview)
+            cv::imshow(config.windowName, outputFrame);
+            cv::imshow("Laptop_Monitor_Preview", previewFrame);
 
             // 5. FPS Control & Input
             int key = graphics.enforceFramePacing(state);
 
             // --- Input Handling ---
+            // --- Input Handling ---
             if (key == 27) break; // ESC
-
-            if (key > 0) {
-                if (key == 'm') {
+            
+            if (key == 13) { // Tasto INVIO (Enter) - Transizione CUE -> LIVE
+                state.transitionCueToLive();
+                std::cout << "\n[CUE] Transizione a LIVE eseguita.\n";
+            }
+            else if (key > 0) {
+                // Rendi la gestione comandi case-insensitive per le funzioni di sistema
+                int lowerKey = std::tolower(key);
+                
+                if (lowerKey == 'm') {
                     state.isAutoMode = !state.isAutoMode;
                     if (state.isAutoMode) {
-                        // Reset beat counter when enabling so it doesn't switch immediately if previously old
                         state.lastSwitchBeat = currentBeat; 
                         std::cout << std::endl << "[AUTO] Enabled. Energy: " << state.currentEnergyTarget << "\n";
                     } else {
                         std::cout << std::endl << "[AUTO] Disabled.\n";
                     }
                 }
-                else if (key == 'j') {
+                else if (lowerKey == 'j') {
                     state.currentEnergyTarget = LOW;
-                    // std::cout << std::endl << "[ENERGY] Set to LOW\n";
                 }
-                else if (key == 'k') {
+                else if (lowerKey == 'k') {
                     state.currentEnergyTarget = MID;
-                    // std::cout << std::endl << "[ENERGY] Set to MID\n";
                 }
-                else if (key == 'l') { // Note: 'l' was used for Link toggle in previous code. You might want to remap Link to 'L' (shift+l) or another key.
-                    // Assuming 'l' is now High Energy
+                else if (lowerKey == 'l') { 
                     state.currentEnergyTarget = HIGH;
-                    // std::cout << std::endl << "[ENERGY] Set to HIGH\n";
                 }
-                else if (key == 'z') { // Toggle Link
+                else if (lowerKey == 'z') { 
                     state.linkEnabled = !state.linkEnabled;
                     link->enable(state.linkEnabled);
-                    std::cout << std::endl << "[LINK] Set" << (state.linkEnabled ? "enabled" : "disabled") << ".\n";
+                    std::cout << std::endl << "[LINK] Set " << (state.linkEnabled ? "enabled" : "disabled") << ".\n";
                     if (!state.linkEnabled) state.queuedForeground = std::nullopt;
                 }
-                else if (key == 'x') { // Manual Sync
-                    // 1. Align the Beat Grid (Link Logic)
+                else if (lowerKey == 'x') { 
                     manualSync(link);
-
-                    // 2. Reset the Visual Counter (Auto-Mode Logic)
-                    // We must re-capture the time because manualSync just changed it slightly
                     auto syncNow = std::chrono::microseconds(link->clock().micros());
                     auto syncTimeline = link->captureAppSessionState();
                     double syncedBeat = syncTimeline.beatAtTime(syncNow, 4);
-
-                    // Tell the state that the "last switch" effectively happened NOW.
                     state.lastSwitchBeat = syncedBeat;
-                    
-                    // Force the NEXT switch to be standard 32 beats.
-                    // This guarantees that 32 beats from pressing 'r', the visual will change.
                     state.nextSwitchDuration = 32;
-
                     std::cout << std::endl << "[AUTO] Counter reset. Next switch in 32 beats.\n";
                 }
-                else if (key == 'b') { // Toggle Bounce
+                else if (lowerKey == 'b') { 
                     state.isBounceActive = !state.isBounceActive;
                 }
-                else { // Asset Switching
-                    auto bg = assetManager.getBackroundByPressedKey(key);
-                    auto fg = assetManager.getForegroundByPressedKey(key);
+                else { 
+                    // Asset Switching: usa il check di sistema per lo Shift
+                    bool isShiftPressed = isShiftDown() || std::isupper(key);
+                    int assetKey = normalizeKey(key); 
+                    
+                    auto bg = assetManager.getBackroundByPressedKey(assetKey);
+                    auto fg = assetManager.getForegroundByPressedKey(assetKey);
 
                     if (bg.has_value()) {
-                        state.switchBackground(bg.value());
+                        if (isShiftPressed) {
+                            state.switchCueBackground(bg.value());
+                        } else {
+                            state.switchBackground(bg.value());
+                        }
                     } 
                     else if (fg.has_value()) {
-                        state.queueForeground(fg.value());
-                        // std::cout << "Queued foreground: " << fg->get_foreground_path() << "\n";
+                        if (isShiftPressed) {
+                            state.switchCueForeground(fg.value());
+                        } else {
+                            state.switchForeground(fg.value()); // Cambio istantaneo LIVE
+                        }
                     }
                 }
             }

@@ -16,6 +16,7 @@ struct DisplayInfo {
 
 DisplayInfo selectTargetDisplay();
 bool isSpaceDown();
+bool isShiftDown();
 
 struct WindowInfo {
     int id;

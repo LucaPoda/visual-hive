@@ -22,8 +22,11 @@ public:
     ~GraphicsManager();
 
     double calculateBounceScale(RuntimeState& state, double currentBeat, double tempo, std::chrono::microseconds now);
-    
+
     cv::Mat composeFrame(RuntimeState& state, AssetManager& assetMgr, double scale);
+    
+    // Genera il frame per il sistema CUE (Preview)
+    cv::Mat composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale);
     
     cv::Mat applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm);
     

@@ -148,3 +148,18 @@ bool isSpaceDown() {
     #endif
     return space;
 }
+
+// Aggiungi alla fine del file PlatformSpecificCode.cpp
+
+bool isShiftDown() {
+    bool shift = false;
+    #ifdef _WIN32
+    // Controlla sia lo Shift sinistro che quello destro su Windows
+    shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
+    #elif __APPLE__
+    // Su macOS (Carbon): kVK_Shift è 0x38 (56), kVK_RightShift è 0x3C (60)
+    shift = CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 56) || 
+            CGEventSourceKeyState(kCGEventSourceStateCombinedSessionState, 60);
+    #endif
+    return shift;
+}

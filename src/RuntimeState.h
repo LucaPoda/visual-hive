@@ -35,11 +35,22 @@ struct RuntimeState {
 
     int captureFailCount = 0;
 
+    // CUE (Preview) Assets
+    std::optional<Background> cueBackground;
+    std::optional<Foreground> cueForeground;
+
     // Constructor
     RuntimeState(AssetManager& assetManager);
     
     // Helper methods
+    // Helper methods
     void switchBackground(const Background& newBg);
-    void queueForeground(const Foreground& newFg);
+    void switchForeground(const Foreground& newFg); // Sostituisce queueForeground
+    
+    // Metodi CUE
+    void switchCueBackground(const Background& newBg);
+    void switchCueForeground(const Foreground& newFg);
+    
     void triggerAutoSwitch(const AssetsConfig& assets, double currentBeat);
+    void transitionCueToLive();
 };

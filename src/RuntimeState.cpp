@@ -55,10 +55,30 @@ void RuntimeState::switchBackground(const Background& newBg) {
     }
 }
 
-void RuntimeState::queueForeground(const Foreground& newFg) {
-    if (activeForeground.get_foreground_path() != newFg.get_foreground_path()) {
-        queuedForeground = newFg;
+void RuntimeState::switchForeground(const Foreground& newFg) {
+    if (activeForeground.get_foreground_path() == newFg.get_foreground_path()) return;
+    
+    activeForeground = newFg;
+    activeForeground.open();
+}
+
+void RuntimeState::switchCueBackground(const Background& newBg) {
+    if (cueBackground.has_value() && cueBackground->get_source() == newBg.get_source()) return;
+    
+    if (cueBackground.has_value()) {
+        cueBackground->close();
     }
+    cueBackground = newBg;
+    cueBackground->open();
+}
+
+void RuntimeState::switchCueForeground(const Foreground& newFg) {
+    if (cueForeground.has_value() && cueForeground->get_foreground_path() == newFg.get_foreground_path()) return;
+    
+    // Nota: aggiungi cueForeground->close() qui se la tua classe Foreground 
+    // ha un metodo close() come Background (es. se usi loghi animati/video).
+    cueForeground = newFg;
+    cueForeground->open();
 }
 
 void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets, double currentBeat) {
@@ -100,4 +120,17 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets, double currentB
 //     std::cout << std::endl << "[AUTO] Switched to " << selected.get_source() 
 //               << " (" << (currentEnergyTarget == LOW ? "LOW" : (currentEnergyTarget == MID ? "MID" : "HIGH")) 
 //               << "). Next in " << nextSwitchDuration << " beats.\n";
+}
+
+void RuntimeState::transitionCueToLive() {
+    if (cueBackground.has_value()) {
+        switchBackground(cueBackground.value());
+        cueBackground = std::nullopt; // Pulisci il CUE dopo la transizione
+    }
+    
+    if (cueForeground.has_value()) {
+        // Applica direttamente o mettilo in coda
+        activeForeground = cueForeground.value();
+        cueForeground = std::nullopt; // Pulisci il CUE
+    }
 }

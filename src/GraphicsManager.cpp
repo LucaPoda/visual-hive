@@ -138,6 +138,38 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
     return outputFrame;
 }
 
+// Aggiungi in GraphicsManager.cpp sotto composeFrame
+
+cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
+    // 1. Determina quale background usare per la preview
+    Background& bgToUse = state.cueBackground.has_value() ? state.cueBackground.value() : state.activeBackground;
+    cv::Mat bgFrame = bgToUse.get_next_frame();
+
+    if (bgFrame.empty()) {
+        // Fallback di base se il frame è vuoto (es. window capture non ancora pronto)
+        bgFrame = cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(50, 50, 50));
+    }
+
+    cv::Mat outputFrame = scaleToFit(bgFrame, displayWidth, displayHeight);
+
+    // 2. Determina quale foreground usare per la preview
+    if (!bgToUse.get_force_no_foreground()) {
+        Foreground& fgToUse = state.cueForeground.has_value() ? state.cueForeground.value() : state.activeForeground;
+        cv::Mat fgFrame = fgToUse.get_next_frame();
+        
+        outputFrame = assetMgr.blend(
+            outputFrame, 
+            fgFrame, 
+            displayWidth, 
+            displayHeight, 
+            fgToUse.get_scale() * scale, 
+            bgToUse.get_foreground_color()
+        );
+    }
+    
+    return outputFrame;
+}
+
 cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm) {
     if (!isSpaceDown()) {
         state.nextStrobeTime = std::nullopt; 
