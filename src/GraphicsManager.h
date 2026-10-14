@@ -21,7 +21,7 @@
 #include "AssetManager.h"
 #include "RuntimeState.h"
 #include "AudioAnalyzer.h"
-
+#include "KNNClassifier.h"
 
 class GraphicsManager {
 private:
@@ -48,7 +48,7 @@ public:
     GraphicsManager(const AppConfig& config, const DisplayInfo& display);
     ~GraphicsManager();
 
-    double calculateBounceScale(RuntimeState& state, double currentBeat, double tempo, std::chrono::microseconds now);
+    double calculateBounceScale(RuntimeState& state, bool isBeat, double tempo, std::chrono::microseconds now);
 
     cv::Mat composeFrame(RuntimeState& state, AssetManager& assetMgr, double scale);
     cv::Mat composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale);
@@ -56,7 +56,7 @@ public:
     cv::Mat applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm, bool isSpacePressed);
     
     void beginDashboard();
-    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer);    
+    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred);    
     
     void showLive(const cv::Mat& frame);
     

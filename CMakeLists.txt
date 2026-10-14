@@ -21,39 +21,11 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json_library)
 
-# --- 2. Fetch Asio ---
-FetchContent_Declare(
-  asio
-  GIT_REPOSITORY https://github.com/chriskohlhoff/asio.git
-  GIT_TAG        asio-1-24-0
-)
-FetchContent_MakeAvailable(asio)
-
-# --- 3. Fetch Ableton Link ---
-FetchContent_Declare(
-  ableton_link
-  GIT_REPOSITORY https://github.com/Ableton/link.git
-  GIT_TAG        Link-3.0.6
-)
-
-# --- DISABILITA LA COMPILAZIONE DI ESEMPI E TEST DI ABLETON ---
-set(LINK_BUILD_QT_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LINK_BUILD_AUDIO_EXAMPLES OFF CACHE BOOL "" FORCE)
-set(LINK_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-
-# Usa MakeAvailable invece del vecchio Populate per evitare il warning
-FetchContent_MakeAvailable(ableton_link)
-
-# Setup Ableton::Link
-include(${ableton_link_SOURCE_DIR}/AbletonLinkConfig.cmake)
-target_compile_definitions(Ableton::Link INTERFACE ASIO_STANDALONE LINK_PLATFORM_ASIO=1)
-target_include_directories(Ableton::Link INTERFACE ${asio_SOURCE_DIR}/asio/include)
-
-# --- 4. Find OpenCV e OpenGL ---
+# --- 2. Find OpenCV e OpenGL ---
 find_package(OpenCV REQUIRED)
 find_package(OpenGL REQUIRED)
 
-# --- 5. Fetch GLFW ---
+# --- 3. Fetch GLFW ---
 FetchContent_Declare(
   glfw
   GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -65,7 +37,7 @@ set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(GLFW_INSTALL OFF CACHE BOOL "" FORCE) # Evita il conflitto con target 'uninstall'
 FetchContent_MakeAvailable(glfw)
 
-# --- 6. Fetch Dear ImGui ---
+# --- 4. Fetch Dear ImGui ---
 FetchContent_Declare(
   imgui
   GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -91,7 +63,7 @@ target_include_directories(imgui PUBLIC
 )
 target_link_libraries(imgui PRIVATE glfw OpenGL::GL)
 
-# --- 7. Fetch RtAudio ---
+# --- 5. Fetch RtAudio ---
 FetchContent_Declare(
   rtaudio
   GIT_REPOSITORY https://github.com/thestk/rtaudio.git
@@ -102,14 +74,14 @@ set(RTAUDIO_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(RTAUDIO_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE) # Compila statico
 set(RTAUDIO_INSTALL OFF CACHE BOOL "" FORCE)           # Evita conflitto 'uninstall'
 
-# Forza la disabilitazione di API audio non necessarie (risolve l'errore 'jack non trovato')
+# Forza la disabilitazione di API audio non necessarie
 set(RTAUDIO_API_JACK OFF CACHE BOOL "" FORCE)
 set(RTAUDIO_API_PULSE OFF CACHE BOOL "" FORCE)
 set(RTAUDIO_API_ALSA OFF CACHE BOOL "" FORCE)
 
 FetchContent_MakeAvailable(rtaudio)
 
-# --- 8. Fetch BTrack (Beat Tracking) ---
+# --- 6. Fetch BTrack (Beat Tracking) ---
 FetchContent_Declare(
   btrack
   GIT_REPOSITORY https://github.com/adamstark/BTrack.git
@@ -147,24 +119,19 @@ if(APPLE)
     target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
 endif()
 
-# --- AbletonLinkManager ---
-add_library(AbletonLinkManager src/AbletonLinkManager.cpp src/AbletonLinkManager.h)
-target_link_libraries(AbletonLinkManager 
-    PRIVATE 
-    Ableton::Link
-    ConfigManager
-) 
-target_include_directories(AbletonLinkManager PRIVATE ${OpenCV_INCLUDE_DIRS})
-
 # --- Audio DSP ---
 add_library(AudioAnalyzer STATIC src/AudioAnalyzer.cpp src/AudioAnalyzer.h)
-# Colleghiamo RtAudio e BTrack all'Analyzer
 target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack)
 target_include_directories(AudioAnalyzer PUBLIC 
     ${rtaudio_SOURCE_DIR} 
     ${btrack_SOURCE_DIR}/src
     ${btrack_SOURCE_DIR}/libs/kiss_fft130
 )
+
+# --- KNN Classifier (NUOVO MODULO) ---
+add_library(KNNClassifier STATIC src/KNNClassifier.cpp src/KNNClassifier.h)
+target_link_libraries(KNNClassifier PUBLIC AssetManager AudioAnalyzer)
+target_include_directories(KNNClassifier PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 # --- AppGraphics (GraphicsManager + RuntimeState) ---
 add_library(AppGraphics STATIC 
@@ -174,12 +141,13 @@ add_library(AppGraphics STATIC
     src/RuntimeState.h
 )
 
-# AppGraphics ha bisogno di AssetManager, Config, Platform code, OpenCV e ImGui
+# AppGraphics ora richiede anche KNNClassifier
 target_link_libraries(AppGraphics 
     PUBLIC
     AssetManager
     ConfigManager
     AudioAnalyzer
+    KNNClassifier
     PlatformSpecificCode
     imgui                 
     glfw                  
@@ -190,21 +158,20 @@ target_link_libraries(AppGraphics
 # --- Main Executable ---
 add_executable(VisualHive src/main.cpp)
 
+# Rimosse dipendenze AbletonLinkManager e Ableton::Link, aggiunto KNNClassifier
 target_link_libraries(VisualHive PRIVATE
     ConfigManager
     AssetManager
-    AbletonLinkManager
     PlatformSpecificCode
     AppGraphics          
     AudioAnalyzer      
+    KNNClassifier
     ${OpenCV_LIBRARIES}
-    Ableton::Link
 )
 
 target_include_directories(VisualHive PRIVATE
     ${json_library_SOURCE_DIR}/include
     ${OpenCV_INCLUDE_DIRS}
-    ${ableton_link_SOURCE_DIR}/include
     src 
 )
 

@@ -7,24 +7,24 @@
 #include <string>
 #include <deque>
 #include <memory>
-#include "BTrack.h" // Inclusione della libreria BTrack
+#include "BTrack.h" 
 
 struct AudioMetrics {
-    float rms = 0.0f;
-    float peak = 0.0f;
-    float spectralFlux = 0.0f;
     float bpm = 0.0f;
+    bool isBeat = false;
+    float peak = 0.0f;
     
-    // Feature KNN - 6 Bande di equalizzazione (Normalizzate 0.0 - 1.0)
-    float bandSubBass = 0.0f;  // 20-60 Hz
-    float bandBass = 0.0f;     // 60-250 Hz
-    float bandLowMid = 0.0f;   // 250-500 Hz
-    float bandMid = 0.0f;      // 500-2000 Hz
-    float bandHighMid = 0.0f;  // 2000-4000 Hz
-    float bandHigh = 0.0f;     // 4000+ Hz
+    // Le 5 Feature "Dream Team" (Tutte Auto-Scaled 0.0 - 1.0)
+    float rms = 0.0f;          // Energia Totale
+    float bandSubBass = 0.0f;  // Presenza di Cassa/Sub (HIGH)
+    float bandBass = 0.0f;     // Corpo del brano
+    float bandHighMid = 0.0f;  // Rullate e Riser (MID)
+    float spectralFlux = 0.0f; // Impatto/Transienti
     
-    float deltaIntensity = 0.0f; // Progression coefficient
-    bool isBeat = false;         // Flag istantaneo che vale true solo nel frame del battito
+    // Manteniamo le altre bande solo per la UI opzionale, ma non per il KNN
+    float bandLowMid = 0.0f;   
+    float bandMid = 0.0f;      
+    float bandHigh = 0.0f;     
 };
 
 struct AudioDeviceInfo {
@@ -53,25 +53,28 @@ private:
     std::mutex metricsMutex;
     AudioMetrics currentMetrics;
 
-    // --- BTrack ---
     std::unique_ptr<BTrack> btrack;
-    std::vector<double> btrackBuffer; // BTrack richiede array di double
+    std::vector<double> btrackBuffer;
 
-    // DSP State
     unsigned int sampleRate = 44100;
     std::vector<float> previousMagnitudes;
-    
     unsigned int currentDeviceId = 0;
     
-    // Stabilizzazione e Normalizzazione
-    float smoothedDelta = 0.0f;
+    // Trackers Locali (per estrazione)
     float maxBandEnergies[6] = {0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f}; 
-    float maxFlux = 0.001f;
+    float localMaxFlux = 0.001f;
+
+    // --- AUTO-SCALER GLOBALI (Volume Invariance) ---
+    float globalMaxRms = 0.001f;
+    float globalMaxSubBass = 0.001f;
+    float globalMaxBass = 0.001f;
+    float globalMaxHighMid = 0.001f;
+    float globalMaxFlux = 0.001f;
 
     struct InstantBands {
         float subBass, bass, lowMid, mid, highMid, high;
         float rms;
-        float flux;
+        float rawFlux;     
     };
     
     std::deque<InstantBands> bandHistory;

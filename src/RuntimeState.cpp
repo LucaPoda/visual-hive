@@ -6,12 +6,8 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
     : isBounceActive(false),
       isAnimating(false),
       strobeFrameToggle(false),
-      linkEnabled(true),
       isAutoMode(false),           
       currentEnergyTarget(MID),    
-      lastSwitchBeat(0.0),
-      nextSwitchDuration(32),      
-      lastBeat(0.0),
       animationStartTime(0),
       lastFrameTime(0),
       nextStrobeTime(std::nullopt),
@@ -75,11 +71,12 @@ void RuntimeState::switchCueForeground(const Foreground& newFg) {
     cueForeground->open();
 }
 
-void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets, double currentBeat) {
+void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
     std::vector<Background> candidates;
 
     for (const auto& [key, bg] : assets.get_backgrounds()) {
         if (bg.get_source() == activeBackground.get_source()) continue;
+        
         if (bg.get_energy_level() == currentEnergyTarget) {
             candidates.push_back(bg);
         }
@@ -93,13 +90,6 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets, double currentB
     
     Background selected = candidates[distr(gen)];
     switchBackground(selected);
-    lastSwitchBeat = currentBeat;
-    
-    int durations[] = {32, 64};
-    std::uniform_int_distribution<> durDist(0, 1);
-    nextSwitchDuration = durations[durDist(gen)];
-    if (currentEnergyTarget == HIGH)
-        nextSwitchDuration = durations[0];
 }
 
 void RuntimeState::transitionCueToLive() {

@@ -7,7 +7,6 @@
 const double PI = 3.14159265358979323846;
 typedef std::complex<float> Complex;
 
-// FFT Iterativa In-Place (Cooley-Tukey Radix-2) - 0 Allocazioni
 void computeFFT(std::vector<Complex>& x) {
     size_t N = x.size();
     if (N <= 1) return;
@@ -35,7 +34,9 @@ void computeFFT(std::vector<Complex>& x) {
     }
 }
 
-AudioAnalyzer::AudioAnalyzer() {}
+AudioAnalyzer::AudioAnalyzer() {
+    bandHistory.clear();
+}
 
 AudioAnalyzer::~AudioAnalyzer() {
     stop();
@@ -55,7 +56,7 @@ std::vector<AudioDeviceInfo> AudioAnalyzer::getInputDevices() {
 
 bool AudioAnalyzer::start(unsigned int deviceId) {
     if (adc.getDeviceCount() < 1) {
-        std::cerr << "[AUDIO] Nessun dispositivo audio trovato.\n";
+        std::cerr << "[AUDIO] Nessun dispositivo audio trovato." << std::endl;
         return false;
     }
 
@@ -77,44 +78,45 @@ bool AudioAnalyzer::start(unsigned int deviceId) {
 
     unsigned int bufferFrames = 512;
     
-    // Inizializza BTrack (HopSize = bufferFrames, FrameSize = bufferFrames * 2)
-    btrack = std::make_unique<BTrack>(bufferFrames, bufferFrames * 2);
-    btrackBuffer.resize(bufferFrames, 0.0);
-    
     try {
         if (adc.isStreamRunning()) adc.stopStream();
         if (adc.isStreamOpen()) adc.closeStream();
 
         if (adc.openStream(nullptr, &parameters, RTAUDIO_FLOAT32, sampleRate, &bufferFrames, &AudioAnalyzer::audioCallback, this) != RTAUDIO_NO_ERROR) {
-            std::cerr << "[AUDIO] Errore openStream: " << adc.getErrorText() << "\n";
+            std::cerr << "[AUDIO] Errore openStream: " << adc.getErrorText() << std::endl;
             return false;
         }
         
+        btrack = std::make_unique<BTrack>(bufferFrames, bufferFrames * 2);
+        btrackBuffer.resize(bufferFrames, 0.0);
+        
         if (adc.startStream() != RTAUDIO_NO_ERROR) {
-            std::cerr << "[AUDIO] Errore startStream: " << adc.getErrorText() << "\n";
+            std::cerr << "[AUDIO] Errore startStream: " << adc.getErrorText() << std::endl;
             return false;
         }
     } catch (const std::exception& e) {
-        std::cerr << "[AUDIO] Eccezione critica RtAudio: " << e.what() << "\n";
+        std::cerr << "[AUDIO] Eccezione critica RtAudio: " << e.what() << std::endl;
         return false;
     }
 
-    std::cout << "[AUDIO] Stream avviato. BTrack Inizializzato (Buffer: " << bufferFrames << ").\n";
     return true;
 }
 
 void AudioAnalyzer::stop() {
     try {
-        if (adc.isStreamRunning()) adc.stopStream(); 
-        if (adc.isStreamOpen()) adc.closeStream(); 
+        if (adc.isStreamRunning()) {
+            adc.stopStream(); 
+        }
+        if (adc.isStreamOpen()) {
+            adc.closeStream(); 
+        }
     } catch (const std::exception& e) {
-        std::cerr << "[AUDIO] Eccezione durante lo stop: " << e.what() << "\n";
+        std::cerr << "[AUDIO] Eccezione durante lo stop: " << e.what() << std::endl;
     }
 }
 
 AudioMetrics AudioAnalyzer::getMetrics() {
     std::lock_guard<std::mutex> lock(metricsMutex);
-    // Auto-reset del flag isBeat dopo la lettura per evitare falsi positivi nel main loop
     AudioMetrics copy = currentMetrics;
     currentMetrics.isBeat = false; 
     return copy;
@@ -122,15 +124,17 @@ AudioMetrics AudioAnalyzer::getMetrics() {
 
 int AudioAnalyzer::audioCallback(void* outputBuffer, void* inputBuffer, unsigned int nBufferFrames,
                                  double streamTime, RtAudioStreamStatus status, void* userData) {
-    if (inputBuffer == nullptr) return 0; 
+    if (inputBuffer == nullptr || userData == nullptr) return 0;
     
     AudioAnalyzer* analyzer = static_cast<AudioAnalyzer*>(userData);
     analyzer->processBuffer(static_cast<float*>(inputBuffer), nBufferFrames, streamTime);
     return 0;
 }
 
+// ... inizio di processBuffer ...
 void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, double streamTime) {
-    // 1. Calcolo RMS e Peak
+    if (numFrames == 0) return;
+
     float sumSquares = 0.0f;
     float maxPeak = 0.0f;
     
@@ -142,22 +146,21 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     }
     float rms = std::sqrt(sumSquares / numFrames);
 
-    // 2. BTrack - BEAT TRACKING E BPM
     bool isBeatNow = false;
     float detectedBpm = 0.0f;
     
     if (btrack) {
-        if (btrackBuffer.size() != numFrames) btrackBuffer.resize(numFrames);
-        for (unsigned int i = 0; i < numFrames; i++) {
-            btrackBuffer[i] = static_cast<double>(buffer[i]); // Cast da float a double
+        if (btrackBuffer.size() != numFrames) {
+            btrackBuffer.resize(numFrames);
         }
-        
+        for (unsigned int i = 0; i < numFrames; i++) {
+            btrackBuffer[i] = static_cast<double>(buffer[i]);
+        }
         btrack->processAudioFrame(btrackBuffer.data());
         isBeatNow = btrack->beatDueInCurrentFrame();
         detectedBpm = static_cast<float>(btrack->getCurrentTempoEstimate());
     }
 
-    // 3. Calcolo Bande Spettrali tramite FFT
     unsigned int fftSize = 2048; 
     while (fftSize < numFrames) fftSize <<= 1;
     
@@ -168,12 +171,14 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     }
     computeFFT(fftData);
 
-    float flux = 0.0f;
+    float rawFlux = 0.0f;
     float binResolution = static_cast<float>(sampleRate) / fftSize;
     float energies[6] = {0}; 
     int binCounts[6] = {0};
 
-    if (previousMagnitudes.size() != fftSize) previousMagnitudes.assign(fftSize, 0.0f);
+    if (previousMagnitudes.size() != fftSize) {
+        previousMagnitudes.assign(fftSize, 0.0f);
+    }
 
     for (unsigned int i = 1; i < fftSize / 2; i++) {
         float magnitude = (std::abs(fftData[i]) / (fftSize / 2.0f)) * 2.0f; 
@@ -187,29 +192,18 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
         else                     { energies[5] += magnitude; binCounts[5]++; }
 
         float diff = magnitude - previousMagnitudes[i];
-        if (diff > 0.0f) flux += diff;
+        if (diff > 0.0f) rawFlux += diff;
         previousMagnitudes[i] = magnitude;
     }
 
-    if (flux > maxFlux) {
-        maxFlux = flux;
-    } else {
-        maxFlux *= 0.9999f; 
-        if (maxFlux < 0.0001f) maxFlux = 0.0001f; 
-    }
-    float normalizedFlux = std::min(flux / maxFlux, 1.0f);
-
-    // 4. Finestra Temporale ed Aggregazione Generale
     InstantBands instant = {0, 0, 0, 0, 0, 0, 0, 0};
     float avgEnergies[6];
     
     for (int i = 0; i < 6; i++) {
         avgEnergies[i] = binCounts[i] > 0 ? (energies[i] / binCounts[i]) : 0.0f;
+        // Aggiorna il picco assoluto senza decadimento
         if (avgEnergies[i] > maxBandEnergies[i]) {
             maxBandEnergies[i] = avgEnergies[i];
-        } else {
-            maxBandEnergies[i] *= 0.9999f; 
-            if (maxBandEnergies[i] < 0.0001f) maxBandEnergies[i] = 0.0001f; 
         }
     }
 
@@ -220,80 +214,81 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     instant.highMid = avgEnergies[4] / maxBandEnergies[4];
     instant.high    = avgEnergies[5] / maxBandEnergies[5];
     instant.rms     = rms;
-    instant.flux    = normalizedFlux;
+    instant.rawFlux = rawFlux; 
 
     bandHistory.push_back(instant);
     if (bandHistory.size() > 1000) bandHistory.pop_front();
 
+    // ---------------------------------------------------------
+    // AGGREGAZIONE (Finestra veloce) E AUTO-SCALING GLOBALE
+    // ---------------------------------------------------------
     float activeBpm = (detectedBpm > 30.0f) ? detectedBpm : 120.0f; 
-    float timeWindowSec = (60.0f / activeBpm) * 4.0f; 
+    float beatDurationSec = 60.0f / activeBpm;
     float bufferDurationSec = static_cast<float>(numFrames) / sampleRate;
     
-    int framesInWindow = static_cast<int>(timeWindowSec / bufferDurationSec);
-    framesInWindow = std::min(framesInWindow, static_cast<int>(bandHistory.size()));
-    framesInWindow = std::max(framesInWindow, 2); 
+    int framesInWindow = static_cast<int>((beatDurationSec * 4.0f) / bufferDurationSec);
+    framesInWindow = std::clamp(framesInWindow, 2, static_cast<int>(bandHistory.size()));
 
     InstantBands aggregated = {0, 0, 0, 0, 0, 0, 0, 0};
     float sumWeights = 0.0f;
-    float recentRms = 0.0f, olderRms = 0.0f;
-    float recentW = 0.0f, olderW = 0.0f;
-    int halfWindow = framesInWindow / 2;
 
     auto it = bandHistory.rbegin();
     for (int i = 0; i < framesInWindow; ++i, ++it) {
         float weight = 1.0f - (static_cast<float>(i) / framesInWindow);
         sumWeights += weight;
-        
-        aggregated.subBass += it->subBass * weight;
-        aggregated.bass    += it->bass * weight;
-        aggregated.lowMid  += it->lowMid * weight;
-        aggregated.mid     += it->mid * weight;
-        aggregated.highMid += it->highMid * weight;
-        aggregated.high    += it->high * weight;
-        aggregated.rms     += it->rms * weight;
-        aggregated.flux    += it->flux * weight;
-
-        if (i < halfWindow) {
-            recentRms += it->rms * weight;
-            recentW += weight;
-        } else {
-            olderRms += it->rms * weight;
-            olderW += weight;
-        }
+        aggregated.subBass  += it->subBass * weight;
+        aggregated.bass     += it->bass * weight;
+        aggregated.lowMid   += it->lowMid * weight;
+        aggregated.mid      += it->mid * weight;
+        aggregated.highMid  += it->highMid * weight;
+        aggregated.high     += it->high * weight;
+        aggregated.rms      += it->rms * weight;
+        aggregated.rawFlux  += it->rawFlux * weight; 
     }
 
     if (sumWeights > 0.0f) {
-        aggregated.subBass /= sumWeights;
-        aggregated.bass    /= sumWeights;
-        aggregated.lowMid  /= sumWeights;
-        aggregated.mid     /= sumWeights;
-        aggregated.highMid /= sumWeights;
-        aggregated.high    /= sumWeights;
-        aggregated.rms     /= sumWeights;
-        aggregated.flux    /= sumWeights;
+        aggregated.subBass  /= sumWeights;
+        aggregated.bass     /= sumWeights;
+        aggregated.lowMid   /= sumWeights;
+        aggregated.mid      /= sumWeights;
+        aggregated.highMid  /= sumWeights;
+        aggregated.high     /= sumWeights;
+        aggregated.rms      /= sumWeights;
+        aggregated.rawFlux  /= sumWeights; 
     }
 
-    float avgRecent = (recentW > 0.0f) ? (recentRms / recentW) : aggregated.rms;
-    float avgOlder  = (olderW > 0.0f) ? (olderRms / olderW) : aggregated.rms;
+    // --- AUTO-SCALING GLOBALE SUI PICCHI ASSOLUTI (No decadimento) ---
     
-    float rawDelta = (avgRecent - avgOlder) * 10.0f;
-    smoothedDelta = (smoothedDelta * 0.90f) + (std::max(-1.0f, std::min(rawDelta, 1.0f)) * 0.10f);
+    if (aggregated.rms > globalMaxRms) globalMaxRms = aggregated.rms;
+    float normRms = std::clamp(aggregated.rms / globalMaxRms, 0.0f, 1.0f);
 
-    // 5. UPDATE METRICHE THREAD-SAFE
+    if (aggregated.subBass > globalMaxSubBass) globalMaxSubBass = aggregated.subBass;
+    float normSubBass = std::clamp(aggregated.subBass / globalMaxSubBass, 0.0f, 1.0f);
+
+    if (aggregated.bass > globalMaxBass) globalMaxBass = aggregated.bass;
+    float normBass = std::clamp(aggregated.bass / globalMaxBass, 0.0f, 1.0f);
+
+    if (aggregated.highMid > globalMaxHighMid) globalMaxHighMid = aggregated.highMid;
+    float normHighMid = std::clamp(aggregated.highMid / globalMaxHighMid, 0.0f, 1.0f);
+
+    if (aggregated.rawFlux > globalMaxFlux) globalMaxFlux = aggregated.rawFlux;
+    float normFlux = std::clamp(aggregated.rawFlux / globalMaxFlux, 0.0f, 1.0f);
+
     if (metricsMutex.try_lock()) {
         currentMetrics.peak = maxPeak; 
-        currentMetrics.bpm = detectedBpm;          // <--- BPM forniti da BTrack
-        if (isBeatNow) currentMetrics.isBeat = true; // <--- Rilevamento preciso del colpo
-        currentMetrics.deltaIntensity = smoothedDelta;
+        currentMetrics.bpm = detectedBpm;          
+        if (isBeatNow) currentMetrics.isBeat = true; 
         
-        currentMetrics.rms = aggregated.rms;
-        currentMetrics.spectralFlux = aggregated.flux;
-        currentMetrics.bandSubBass = aggregated.subBass;
-        currentMetrics.bandBass    = aggregated.bass;
-        currentMetrics.bandLowMid  = aggregated.lowMid;
-        currentMetrics.bandMid     = aggregated.mid;
-        currentMetrics.bandHighMid = aggregated.highMid;
-        currentMetrics.bandHigh    = aggregated.high;
+        currentMetrics.rms = normRms;
+        currentMetrics.bandSubBass = normSubBass;
+        currentMetrics.bandBass = normBass;
+        currentMetrics.bandHighMid = normHighMid;
+        currentMetrics.spectralFlux = normFlux;
+        
+        currentMetrics.bandLowMid = aggregated.lowMid;
+        currentMetrics.bandMid = aggregated.mid;
+        currentMetrics.bandHigh = aggregated.high;
+        
         metricsMutex.unlock();
     }
 }

@@ -11,16 +11,12 @@ struct RuntimeState {
     bool isBounceActive;
     bool isAnimating;
     bool strobeFrameToggle;
-    bool linkEnabled;
 
-    // Auto Mode State
-    bool isAutoMode = false;         // 'm' toggles this
-    EnergyLevel currentEnergyTarget = MID; // 'j', 'k', 'l' sets this
-    double lastSwitchBeat = 0.0;     
-    int nextSwitchDuration = 32;     
+    // Auto Mode & ML State
+    bool isAutoMode = false;         // 'M' attiva/disattiva
+    EnergyLevel currentEnergyTarget = MID; // 'J', 'K', 'L' impostano manualmente
 
-    // Timing & Beat Tracking
-    double lastBeat;
+    // Timing
     std::chrono::microseconds animationStartTime;
     long long lastFrameTime;
     
@@ -41,17 +37,18 @@ struct RuntimeState {
     // Constructor
     RuntimeState(AssetManager& assetManager);
     
-    // Helper methods
+    // Asset Management
     void switchBackground(const Background& newBg);
     void switchForeground(const Foreground& newFg);
     
-    // Metodi CUE
+    // CUE Methods
     void switchCueBackground(const Background& newBg);
     void switchCueForeground(const Foreground& newFg);
     
-    void triggerAutoSwitch(const AssetsConfig& assets, double currentBeat);
+    // Auto Switch
+    void triggerAutoSwitch(const AssetsConfig& assets);
     void transitionCueToLive();
 
-    // Metodo helper per capire se c'è un preview caricato
+    // Helper
     bool hasActiveCue() const;
 };
