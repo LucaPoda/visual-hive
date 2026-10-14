@@ -3,9 +3,29 @@
 #include <numeric>
 #include <algorithm>
 #include <iostream>
+#include <filesystem>
+#include <cstdio>
+#include <cstdint>
 
 const double PI = 3.14159265358979323846;
 typedef std::complex<float> Complex;
+
+// Header Standard WAV (32-bit Float)
+struct WavHeader {
+    char riff[4] = {'R','I','F','F'};
+    uint32_t fileSize;
+    char wave[4] = {'W','A','V','E'};
+    char fmt[4] = {'f','m','t',' '};
+    uint32_t fmtSize = 16;
+    uint16_t audioFormat = 3; // 3 = IEEE Float
+    uint16_t numChannels = 1; // Mono
+    uint32_t sampleRate = 44100;
+    uint32_t byteRate = 44100 * 1 * 4;
+    uint16_t blockAlign = 4;
+    uint16_t bitsPerSample = 32;
+    char data[4] = {'d','a','t','a'};
+    uint32_t dataSize;
+};
 
 void computeFFT(std::vector<Complex>& x) {
     size_t N = x.size();
@@ -39,6 +59,7 @@ AudioAnalyzer::AudioAnalyzer() {
 }
 
 AudioAnalyzer::~AudioAnalyzer() {
+    stopRecording();
     stop();
 }
 
@@ -67,13 +88,22 @@ bool AudioAnalyzer::start(unsigned int deviceId) {
         auto devices = getInputDevices();
         if (devices.empty()) return false;
         selectedId = devices[0].id;
+        info = adc.getDeviceInfo(selectedId);
+    }
+
+    // --- CONTROLLO HARDCODE STEREO ---
+    if (info.inputChannels < 2) {
+        std::cerr << "[AUDIO] ERRORE CRITICO: Il dispositivo '" << info.name 
+                  << "' ha solo " << info.inputChannels 
+                  << " canale/i. Il sistema richiede un ingresso STEREO per la registrazione." << std::endl;
+        return false; // Rifiuta di partire
     }
 
     currentDeviceId = selectedId;
 
     RtAudio::StreamParameters parameters;
     parameters.deviceId = currentDeviceId;
-    parameters.nChannels = 1;
+    parameters.nChannels = 2; // Forzato a 2 canali
     parameters.firstChannel = 0;
 
     unsigned int bufferFrames = 512;
@@ -104,12 +134,8 @@ bool AudioAnalyzer::start(unsigned int deviceId) {
 
 void AudioAnalyzer::stop() {
     try {
-        if (adc.isStreamRunning()) {
-            adc.stopStream(); 
-        }
-        if (adc.isStreamOpen()) {
-            adc.closeStream(); 
-        }
+        if (adc.isStreamRunning()) adc.stopStream(); 
+        if (adc.isStreamOpen()) adc.closeStream(); 
     } catch (const std::exception& e) {
         std::cerr << "[AUDIO] Eccezione durante lo stop: " << e.what() << std::endl;
     }
@@ -127,25 +153,48 @@ int AudioAnalyzer::audioCallback(void* outputBuffer, void* inputBuffer, unsigned
     if (inputBuffer == nullptr || userData == nullptr) return 0;
     
     AudioAnalyzer* analyzer = static_cast<AudioAnalyzer*>(userData);
-    analyzer->processBuffer(static_cast<float*>(inputBuffer), nBufferFrames, streamTime);
+    float* inBuffer = static_cast<float*>(inputBuffer);
+
+    if (analyzer->isRecording) {
+        std::vector<float> block(inBuffer, inBuffer + (nBufferFrames * 2));
+        {
+            std::lock_guard<std::mutex> lock(analyzer->recordMutex);
+            analyzer->recordQueue.push(std::move(block));
+        }
+        analyzer->recordCV.notify_one();
+    }
+
+    float peakL = 0.0f;
+    float peakR = 0.0f;
+    std::vector<float> monoBuffer(nBufferFrames);
+    
+    for (unsigned int i = 0; i < nBufferFrames; ++i) {
+        float l = inBuffer[i * 2];
+        float r = inBuffer[i * 2 + 1];
+        
+        // Estrazione picchi separati
+        if (std::abs(l) > peakL) peakL = std::abs(l);
+        if (std::abs(r) > peakR) peakR = std::abs(r);
+        
+        // Downmix mono
+        monoBuffer[i] = (l + r) * 0.5f;
+    }
+
+    // Passiamo i picchi estratti
+    analyzer->processBuffer(monoBuffer.data(), nBufferFrames, streamTime, peakL, peakR);
     return 0;
 }
 
-// ... inizio di processBuffer ...
-void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, double streamTime) {
+void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, double streamTime, float peakL, float peakR) {
     if (numFrames == 0) return;
 
     float sumSquares = 0.0f;
-    float maxPeak = 0.0f;
     
     for (unsigned int i = 0; i < numFrames; i++) {
         float sample = buffer[i];
         sumSquares += sample * sample;
-        float absSample = std::abs(sample);
-        if (absSample > maxPeak) maxPeak = absSample;
     }
     float rms = std::sqrt(sumSquares / numFrames);
-
     bool isBeatNow = false;
     float detectedBpm = 0.0f;
     
@@ -201,9 +250,8 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     
     for (int i = 0; i < 6; i++) {
         avgEnergies[i] = binCounts[i] > 0 ? (energies[i] / binCounts[i]) : 0.0f;
-        // Aggiorna il picco assoluto senza decadimento
         if (avgEnergies[i] > maxBandEnergies[i]) {
-            maxBandEnergies[i] = avgEnergies[i];
+            maxBandEnergies[i] = avgEnergies[i]; // No decadimento locale
         }
     }
 
@@ -220,7 +268,7 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     if (bandHistory.size() > 1000) bandHistory.pop_front();
 
     // ---------------------------------------------------------
-    // AGGREGAZIONE (Finestra veloce) E AUTO-SCALING GLOBALE
+    // AGGREGAZIONE (Finestra veloce)
     // ---------------------------------------------------------
     float activeBpm = (detectedBpm > 30.0f) ? detectedBpm : 120.0f; 
     float beatDurationSec = 60.0f / activeBpm;
@@ -275,7 +323,11 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     float normFlux = std::clamp(aggregated.rawFlux / globalMaxFlux, 0.0f, 1.0f);
 
     if (metricsMutex.try_lock()) {
-        currentMetrics.peak = maxPeak; 
+        // Salvataggio dei meter L/R e del picco assoluto
+        currentMetrics.peakL = peakL;
+        currentMetrics.peakR = peakR;
+        currentMetrics.peak = std::max(peakL, peakR); // Compatibilità
+        
         currentMetrics.bpm = detectedBpm;          
         if (isBeatNow) currentMetrics.isBeat = true; 
         
@@ -291,4 +343,107 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
         
         metricsMutex.unlock();
     }
+}
+
+// =======================================================
+// RECORDING ASINCRONO MULTITHREAD
+// =======================================================
+void AudioAnalyzer::startRecording(const std::string& baseFilename) {
+    if (isRecording) return;
+    
+    std::filesystem::create_directories("recordings");
+    recordBasePath = baseFilename;
+    recordPartIndex = 1;
+    totalRecordedSamples = 0;
+    
+    stopWriter = false;
+    while(!recordQueue.empty()) recordQueue.pop();
+    
+    openNextWavFile();
+    
+    isRecording = true;
+    writerThread = std::thread(&AudioAnalyzer::writerLoop, this);
+}
+
+void AudioAnalyzer::stopRecording() {
+    if (!isRecording) return;
+    isRecording = false;
+    stopWriter = true;
+    recordCV.notify_one();
+    if (writerThread.joinable()) {
+        writerThread.join();
+    }
+    closeCurrentWavFile();
+}
+
+void AudioAnalyzer::openNextWavFile() {
+    if (currentWavFile.is_open()) {
+        closeCurrentWavFile();
+    }
+    
+    currentRecordFile = "recordings/" + recordBasePath + "_part" + std::to_string(recordPartIndex++) + ".wav";
+    currentWavFile.open(currentRecordFile, std::ios::binary);
+    
+    WavHeader header;
+    header.numChannels = 2; // Hardcode Stereo
+    header.byteRate = sampleRate * 2 * 4; 
+    header.blockAlign = 8; // 2 canali * 4 byte
+    
+    currentWavFile.write(reinterpret_cast<const char*>(&header), sizeof(WavHeader));
+    currentFileSamples = 0;
+}
+
+void AudioAnalyzer::closeCurrentWavFile() {
+    if (currentWavFile.is_open()) {
+        currentWavFile.seekp(0, std::ios::beg);
+        WavHeader header;
+        header.sampleRate = sampleRate;
+        header.numChannels = 2; // Hardcode Stereo
+        header.byteRate = sampleRate * 2 * 4;
+        header.blockAlign = 8;
+        
+        header.dataSize = currentFileSamples * 4;
+        header.fileSize = 36 + header.dataSize;
+        
+        currentWavFile.write(reinterpret_cast<const char*>(&header), sizeof(WavHeader));
+        currentWavFile.close();
+    }
+}
+
+void AudioAnalyzer::writerLoop() {
+    // 60 minuti * 2 canali (per calcolare il limite di float)
+    const uint32_t CHUNK_SAMPLE_LIMIT = sampleRate * 60 * 60; 
+    
+    while (!stopWriter || !recordQueue.empty()) {
+        std::vector<float> block;
+        {
+            std::unique_lock<std::mutex> lock(recordMutex);
+            recordCV.wait(lock, [this] { return !recordQueue.empty() || stopWriter; });
+            
+            if (recordQueue.empty()) continue;
+            
+            block = std::move(recordQueue.front());
+            recordQueue.pop();
+        }
+        
+        if (currentWavFile.is_open()) {
+            currentWavFile.write(reinterpret_cast<const char*>(block.data()), block.size() * sizeof(float));
+            currentFileSamples += block.size();
+            totalRecordedSamples += block.size();
+            
+            if (currentFileSamples >= CHUNK_SAMPLE_LIMIT) {
+                openNextWavFile();
+            }
+        }
+    }
+}
+
+std::string AudioAnalyzer::getRecordingTimeFormatted() const {
+    // Dividiamo per 2 per tornare ai sample rate reali e calcolare i secondi
+    uint32_t seconds = totalRecordedSamples / (sampleRate * 2);
+    uint32_t m = seconds / 60;
+    uint32_t s = seconds % 60;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%02d:%02d", m, s);
+    return std::string(buf);
 }

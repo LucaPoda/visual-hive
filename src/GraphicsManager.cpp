@@ -1,8 +1,8 @@
 #include "GraphicsManager.h"
-#include "KNNClassifier.h"
 #include <cmath>
 #include <iostream>
 #include <filesystem>
+#include <ctime>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -10,13 +10,11 @@
 
 namespace fs = std::filesystem;
 
-// Riferimento all'istanza globale definita in main.cpp
 extern KNNClassifier knnClassifier;
 
 GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& display) 
 : windowName(config.windowName), displayWidth(display.width), displayHeight(display.height) 
 {
-    // --- 1. Setup Iniziale GLFW ---
     if (!glfwInit()) {
         std::cerr << "[ERROR] Impossibile inizializzare GLFW!" << std::endl;
         exit(1);
@@ -29,7 +27,6 @@ GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& dis
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); 
     #endif
     
-    // --- 2. Finestra di Regia (UI) ---
     uiWindow = glfwCreateWindow(1280, 720, "Visual-Hive - Regia / Dashboard", NULL, NULL);
     if (!uiWindow) {
         glfwTerminate();
@@ -37,9 +34,7 @@ GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& dis
         exit(1);
     }
     
-    // --- 3. Finestra del Proiettore ---
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); 
-    // Il 5° parametro (uiWindow) permette alle due finestre di condividere lo stesso contesto OpenGL
     projectorWindow = glfwCreateWindow(displayWidth, displayHeight, windowName.c_str(), NULL, uiWindow);
     if (!projectorWindow) {
         glfwTerminate();
@@ -48,15 +43,12 @@ GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& dis
     }
     glfwSetWindowPos(projectorWindow, display.x, display.y);
     
-    // --- 4. Configurazione Contesto e V-Sync ---
     glfwMakeContextCurrent(uiWindow);
-    glfwSwapInterval(1); // Abilita V-Sync
+    glfwSwapInterval(1);
     
-    // --- 5. Inizializza OpenGL Pipeline per il proiettore ---
     setupProjectorQuad();
     
-    // --- 6. Setup Dear ImGui ---
-    glfwMakeContextCurrent(uiWindow); // Riporta il contesto alla UI
+    glfwMakeContextCurrent(uiWindow); 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -104,7 +96,6 @@ void GraphicsManager::setupProjectorQuad() {
     glAttachShader(shaderProgram, fs); 
     glLinkProgram(shaderProgram);
     
-    // PosX, PosY, TexU, TexV
     float vertices[] = { 
         -1.0f, -1.0f,  0.0f, 0.0f,  
         1.0f, -1.0f,  1.0f, 0.0f,  
@@ -165,9 +156,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     
-    // ==========================================
-    // SEZIONE SUPERIORE: PREVIEW CUE & LIVE
-    // ==========================================
     ImGui::Text("=== SISTEMA DI REGIA VJ ===");
     ImGui::Separator();
     
@@ -188,36 +176,23 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Columns(1);
     ImGui::EndChild();
     
-    // ==========================================
-    // SEZIONE INFERIORE A DUE COLONNE (FASE 4)
-    // ==========================================
     AudioMetrics audioData = audioAnalyzer.getMetrics();
-    // Preserviamo i BPM passati da main.cpp qualora getMetrics() restituisca 0 o usiamo quelli del DSP
     float currentBpm = (audioData.bpm > 0.0f) ? audioData.bpm : static_cast<float>(bpm);
+    bool audioActive = (audioData.peak > 0.001f);
     
     ImGui::BeginChild("BottomSection", ImVec2(0, 0), false);
     ImGui::Columns(2, "BottomCols", false);
     
-    // ------------------------------------------
-    // COLONNA SINISTRA: Stato Runtime & Beat Effects
-    // ------------------------------------------
     ImGui::BeginChild("RuntimeState", ImVec2(0, 0), true);
-    
     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "STATO RUNTIME");
     ImGui::Separator();
     
-    // 1. Intensità Attuale con colore dedicato
     ImGui::Text("Intensità Attuale: ");
     ImGui::SameLine();
-    if (state.currentEnergyTarget == LOW) {
-        ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "LOW");
-    } else if (state.currentEnergyTarget == MID) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "MID");
-    } else {
-        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "HIGH");
-    }
+    if (state.currentEnergyTarget == LOW) ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "LOW");
+    else if (state.currentEnergyTarget == MID) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "MID");
+    else ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "HIGH");
     
-    // 2. Asset Attivi
     ImGui::Text("Background: [ %s ]", state.activeBackground.get_key().c_str());
     if (!state.activeBackground.get_force_no_foreground()) {
         std::string fgPath = state.activeForeground.get_foreground_path();
@@ -228,7 +203,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         ImGui::TextDisabled("Foreground: Disabilitato (Force No FG)");
     }
     
-    // 3. Info Effetti (Strobo)
     bool strobeActive = ImGui::IsKeyDown(ImGuiKey_Space);
     ImGui::Text("Strobo (Spazio): ");
     ImGui::SameLine();
@@ -244,10 +218,8 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO INPUT & BEAT");
     ImGui::Separator();
     
-    // 4. Selettore Interfaccia Audio + Refresh
     static std::vector<AudioDeviceInfo> audioDevices = audioAnalyzer.getInputDevices();
     static std::string currentDeviceName = "Seleziona Dispositivo...";
-    
     if (currentDeviceName == "Seleziona Dispositivo..." && !audioDevices.empty()) {
         unsigned int activeId = audioAnalyzer.getCurrentDeviceId();
         for (const auto& dev : audioDevices) {
@@ -271,43 +243,141 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         ImGui::EndCombo();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Refresh", ImVec2(55.0f, 0.0f))) {
-        audioDevices = audioAnalyzer.getInputDevices();
-    }
+    if (ImGui::Button("Refresh", ImVec2(55.0f, 0.0f))) audioDevices = audioAnalyzer.getInputDevices();
     
-    // 5. Meter Principale Audio in Ingresso
-    ImGui::Text("Main In:");
+    // 5. Meter Principale Audio in Ingresso (Stereo dBFS con Peak Hold)
+    
+    // Variabili statiche per mantenere la "memoria" del picco
+    static float peakHoldL = 0.0f;
+    static float peakHoldR = 0.0f;
+
+    // Aggiornamento Peak Hold: Sale subito, scende lentamente (0.97f a ~30-60fps)
+    if (audioData.peakL > peakHoldL) peakHoldL = audioData.peakL;
+    else peakHoldL *= 0.999f;
+
+    if (audioData.peakR > peakHoldR) peakHoldR = audioData.peakR;
+    else peakHoldR *= 0.999f;
+
+    // Usiamo il valore massimo del Peak Hold (tra L e R) per scriverlo in dB in alto
+    float maxHold = std::max(peakHoldL, peakHoldR);
+    float maxHoldDb = (maxHold > 0.0001f) ? 20.0f * std::log10(maxHold) : -60.0f;
+    
+    char avgBuf[32];
+    if (maxHoldDb <= -59.0f) snprintf(avgBuf, sizeof(avgBuf), "-INF");
+    else snprintf(avgBuf, sizeof(avgBuf), "%+.1f dB", maxHoldDb);
+
+    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Main In (dBFS):");
     ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
-    if (audioData.peak > 0.85f) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.9f, 0.1f, 0.1f, 1.0f));
-    else if (audioData.peak > 0.6f) ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.8f, 0.8f, 0.1f, 1.0f));
-    ImGui::ProgressBar(audioData.peak, ImVec2(-1.0f, 12.0f), "");
-    ImGui::PopStyleColor(audioData.peak > 0.6f ? 2 : 1);
     
-    // 6. Indicatore BPM e Stato del Bounce
+    // Colore del testo basato sul picco trattenuto
+    ImVec4 avgColor;
+    if (maxHoldDb >= -0.1f) avgColor = ImVec4(1.0f, 0.1f, 0.1f, 1.0f); 
+    else if (maxHoldDb > -6.0f) avgColor = ImVec4(1.0f, 0.8f, 0.1f, 1.0f);
+    else avgColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f); 
+    
+    ImGui::TextColored(avgColor, "[ %s ]", avgBuf);
+
+    // Lambda per disegnare i fader L/R con tacca
+    auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
+        float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
+        float holdDb = (linearHold > 0.0001f) ? 20.0f * std::log10(linearHold) : -60.0f;
+        
+        // Range visivo da -48 dB a 0 dB
+        float minDb = -48.0f; 
+        float maxDb = 0.0f;
+        float fraction = std::clamp((db - minDb) / (maxDb - minDb), 0.0f, 1.0f);
+        float holdFraction = std::clamp((holdDb - minDb) / (maxDb - minDb), 0.0f, 1.0f);
+
+        // Colore della barra principale istantanea
+        ImVec4 color;
+        if (db >= -0.1f) color = ImVec4(1.0f, 0.1f, 0.1f, 1.0f); 
+        else if (db > -6.0f) color = ImVec4(1.0f, 0.8f, 0.1f, 1.0f);
+        else color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); 
+
+        ImGui::Text("%s", label);
+        ImGui::SameLine(25.0f);
+        
+        // 1. Disegna la progress bar
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
+        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 8.0f), ""); 
+        ImGui::PopStyleColor();
+
+        // 2. Disegna la "tacca" bianca del Peak Hold sopra la barra
+        if (holdFraction > 0.0f) {
+            // Prende le coordinate rettangolari dell'ultimo elemento disegnato (la ProgressBar)
+            ImVec2 p_min = ImGui::GetItemRectMin();
+            ImVec2 p_max = ImGui::GetItemRectMax();
+            
+            // Calcola la X esatta dove piazzare la tacca
+            float tick_x = p_min.x + (p_max.x - p_min.x) * holdFraction;
+            
+            // Evita che la tacca sbrodoli fuori dal rettangolo a destra
+            if (tick_x > p_max.x - 1.0f) tick_x = p_max.x - 1.0f;
+            
+            // Renderizza un segmento verticale spesso 2px
+            ImGui::GetWindowDrawList()->AddLine(
+                ImVec2(tick_x, p_min.y), 
+                ImVec2(tick_x, p_max.y), 
+                IM_COL32(255, 255, 255, 255), 
+                2.0f
+            );
+        }
+    };
+
+    // Passiamo alla lambda sia il valore istantaneo che quello del "Peak Hold"
+    drawDbMeter("L", audioData.peakL, peakHoldL);
+    drawDbMeter("R", audioData.peakR, peakHoldR);
+    
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    
     ImGui::Text("BPM Attuali: %.1f", currentBpm);
     ImGui::Text("Bounce (B): ");
     ImGui::SameLine();
-    if (state.isBounceActive && currentBpm > 0.0f) {
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "ON");
-    } else if (state.isBounceActive && currentBpm <= 0.0f) {
-        ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "OFF (No BPM)");
+    if (state.isBounceActive && currentBpm > 0.0f) ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "ON");
+    else if (state.isBounceActive && currentBpm <= 0.0f) ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "OFF (No BPM)");
+    else ImGui::TextDisabled("OFF");
+
+    ImGui::Dummy(ImVec2(0.0f, 8.0f));
+    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "REGISTRAZIONE AUDIO (RAW .WAV)");
+    ImGui::Separator();
+    
+    if (audioAnalyzer.isRecordingActive()) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Stop Registrazione", ImVec2(-1, 30))) {
+            audioAnalyzer.stopRecording();
+        }
+        ImGui::PopStyleColor();
+        
+        ImGui::Text("File: %s", audioAnalyzer.getCurrentRecordFilename().c_str());
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Tempo: %s (in corso...)", audioAnalyzer.getRecordingTimeFormatted().c_str());
     } else {
-        ImGui::TextDisabled("OFF");
+        if (ImGui::Button("Avvia Registrazione", ImVec2(-1, 30))) {
+            auto t = std::time(nullptr);
+            auto tm = *std::localtime(&t);
+            char timeBuf[64];
+            std::strftime(timeBuf, sizeof(timeBuf), "rec_%Y%m%d_%H%M%S", &tm);
+            audioAnalyzer.startRecording(timeBuf);
+        }
     }
 
     ImGui::EndChild();
     ImGui::NextColumn();
 
     // ------------------------------------------
-    // COLONNA DESTRA: Auto Mode & Machine Learning
+    // COLONNA DESTRA: Auto Mode & ML
     // ------------------------------------------
     ImGui::BeginChild("AutoModeML", ImVec2(0, 0), true);
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
     ImGui::Separator();
     
-    // 1. Top Bar: Toggle Auto Mode + Dropdown Preset CSV + Bottone Nuovo Dataset
+    if (!audioActive) ImGui::BeginDisabled();
     ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
+    if (!audioActive) {
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), " (Disabilitato: Muto)");
+    }
+
     ImGui::SameLine();
     static std::vector<std::string> csvPresets = {"knn_dataset.csv"};
     static std::string currentPreset = "knn_dataset.csv";
@@ -336,16 +406,14 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         ImGui::EndCombo();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Nuovo Dataset")) {
-        ImGui::OpenPopup("Training Dataset KNN");
-    }
+    if (ImGui::Button("Nuovo Dataset")) ImGui::OpenPopup("Training Dataset KNN");
     
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
     
-    // 2. Risultati KNN (Confidenze)
-    std::string predWinStr = (pred.winner == LOW) ? "LOW" : (pred.winner == MID) ? "MID" : "HIGH";
+    std::string predWinStr = (pred.winner == LOW) ? "LOW" : (pred.winner == MID) ? "MID" : (pred.winner == HIGH) ? "HIGH" : "MANUAL";
     ImVec4 winColor = (pred.winner == LOW) ? ImVec4(0.2f, 0.6f, 1.0f, 1.0f) :
                      (pred.winner == MID) ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+    if (pred.winner == MANUAL) winColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
                      
     ImGui::Text("CLASSE VINCENTE KNN:");
     ImGui::SameLine();
@@ -373,22 +441,10 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Separator();
 
     auto drawCompactMeter = [](const char* label, float val, const ImVec4& col) {
-        ImGui::Text("%-12s", label); // Etichetta più larga
+        ImGui::Text("%-12s", label); 
         ImGui::SameLine(90.0f);
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
         ImGui::ProgressBar(std::clamp(val, 0.0f, 1.0f), ImVec2(-1.0f, 6.0f), "");
-        ImGui::PopStyleColor();
-    };
-
-    auto drawBipolarMeter = [](const char* label, float val, const ImVec4& colPos, const ImVec4& colNeg) {
-        ImGui::Text("%-12s", label);
-        ImGui::SameLine(90.0f);
-        // Val va da -1.0 a 1.0. 
-        ImVec4 col = (val > 0) ? colPos : colNeg;
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-        // Spostiamo lo zero al centro
-        float fraction = (val + 1.0f) * 0.5f; 
-        ImGui::ProgressBar(std::clamp(fraction, 0.0f, 1.0f), ImVec2(-1.0f, 6.0f), "");
         ImGui::PopStyleColor();
     };
 
@@ -405,13 +461,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
 
     ImGui::Columns(1);
 
-    // ==========================================
-    // POPUP MODALE: Training Dataset KNN
-    // ==========================================
     if (ImGui::BeginPopupModal("Training Dataset KNN", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
         std::map<EnergyLevel, int> counts = knnClassifier.getClassCounts();
         int totalSamples = counts[LOW] + counts[MID] + counts[HIGH];
-        // Stima ~64 byte per riga CSV
         float estimatedKB = (totalSamples * 64.0f) / 1024.0f;
         ImGui::Text("Statistiche Dataset Temporaneo:");
         ImGui::BulletText("LOW:  %d samples", counts[LOW]);
@@ -425,7 +477,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         auto handleCaptureButton = [&](const char* btnLabel, EnergyLevel level, const ImVec4& btnCol) {
             ImGui::PushStyleColor(ImGuiCol_Button, btnCol);
             bool clicked = ImGui::Button(btnLabel, ImVec2(125, 45));
-            bool held = ImGui::IsItemActive(); // Permette di tenere premuto il bottone!
+            bool held = ImGui::IsItemActive(); 
             ImGui::PopStyleColor();
             if (clicked || (held && captureTimer >= 0.25f)) {
                 knnClassifier.addSample(audioData, level);
@@ -452,13 +504,11 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
         ImGui::EndPopup();
     }
-    ImGui::EndChild(); // Fine AutoModeML
+    ImGui::EndChild(); 
     ImGui::Columns(1);
-    ImGui::EndChild(); // Fine BottomSection
-    // ==========================================
-    // CHIUSURA FRAME IMGUI E RENDER FINESTRA UI
-    // ==========================================
-    ImGui::End(); // Chiude "Dashboard"
+    ImGui::EndChild(); 
+
+    ImGui::End(); 
     ImGui::Render();
     int display_w, display_h;
     glfwGetFramebufferSize(uiWindow, &display_w, &display_h);
@@ -468,13 +518,11 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(uiWindow);
 }
+
 void GraphicsManager::showLive(const cv::Mat& frame) {
     if (frame.empty()) return;
-    // Sposta il controllo OpenGL sulla finestra del proiettore
     glfwMakeContextCurrent(projectorWindow);
-    // Aggiorna la memoria video
     UpdateGLTexture(frame, projectorTexID);
-    // Renderizza il quad a tutto schermo usando il nostro shader
     int display_w, display_h;
     glfwGetFramebufferSize(projectorWindow, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
@@ -485,14 +533,14 @@ void GraphicsManager::showLive(const cv::Mat& frame) {
     glUniform1i(glGetUniformLocation(shaderProgram, "texMap"), 0);
     glBindVertexArray(quadVAO);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    // Manda a schermo
     glfwSwapBuffers(projectorWindow);
-    // Riporta il controllo alla finestra Regia per il prossimo giro del loop
     glfwMakeContextCurrent(uiWindow);
 }
+
 bool GraphicsManager::shouldCloseUI() const {
     return glfwWindowShouldClose(uiWindow) || glfwWindowShouldClose(projectorWindow);
 }
+
 cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor) {
     if (src.empty()) return cv::Mat(targetHeight, targetWidth, CV_8UC3, bgColor);
     int srcWidth = src.cols;
@@ -508,7 +556,6 @@ cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int tar
     int yOffset = (newHeight - targetHeight) / 2;
     if (xOffset < 0) xOffset = 0;
     if (yOffset < 0) yOffset = 0;
-    // Protezione aggiuntiva qualora newHeight o newWidth siano minori del target
     int safeWidth = std::min(targetWidth, resizedFrame.cols - xOffset);
     int safeHeight = std::min(targetHeight, resizedFrame.rows - yOffset);
     cv::Rect cropRegion(xOffset, yOffset, safeWidth, safeHeight);
@@ -518,6 +565,7 @@ cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int tar
     }
     return cropped;
 }
+
 cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
     cv::Mat frame = state.activeBackground.get_next_frame();
     if (state.activeBackground.get_type() == WINDOW_CAPTURE) {
@@ -552,6 +600,7 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
     }
     return outputFrame;
 }
+
 cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
     Background& bgToUse = state.cueBackground.has_value() ? state.cueBackground.value() : state.activeBackground;
     cv::Mat bgFrame = bgToUse.get_next_frame();
@@ -574,7 +623,7 @@ cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& asse
     }
     return outputFrame;
 }
-// 1. STROBE INDIPENDENTE DAI BPM (Frequenza fissa 50ms)
+
 cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm, bool isSpacePressed) {
     if (!isSpacePressed) {
         state.nextStrobeTime = std::nullopt;
@@ -583,7 +632,7 @@ cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& 
     auto now = std::chrono::steady_clock::now();
     if (!state.nextStrobeTime.has_value()) {
         state.nextStrobeTime = now;
-        state.strobeFrameToggle = true; // Inizia acceso
+        state.strobeFrameToggle = true; 
     }
     if (now >= state.nextStrobeTime.value()) {
         state.strobeFrameToggle = !state.strobeFrameToggle;
@@ -594,23 +643,20 @@ cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& 
     }
     return composedFrame;
 }
-// 2. BOUNCE CON BLOCCO BPM E TRIGGER DA BTRACK
+
 double GraphicsManager::calculateBounceScale(RuntimeState& state, bool isBeat, double tempo, std::chrono::microseconds now) {
-    // Disattiva automaticamente se non ci sono BPM validi
     if (tempo <= 0.0) {
         state.isAnimating = false;
         return 1.0;
     }
     double scale = 1.0;
-    // Trigger dell'animazione sul colpo di cassa/beat
     if (isBeat && state.isBounceActive) {
         state.isAnimating = true;
         state.animationStartTime = now;
     }
-    // Esecuzione dell'animazione
     if (state.isAnimating) {
         auto elapsed = now - state.animationStartTime;
-        double beatDuration = (60.0 / tempo) * 1000000.0; // Durata del beat in microsecondi
+        double beatDuration = (60.0 / tempo) * 1000000.0; 
         double progress = static_cast<double>(elapsed.count()) / beatDuration;
         if (progress < 1.0) {
             scale = 1.0 + 0.2 * std::sin((progress + 0.75) * (M_PI));

@@ -7,11 +7,8 @@
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_GLCOREARB
 
-// Include per GLFW e OpenGL
 #include <GLFW/glfw3.h>
 
-
-// Include per ImGui
 #include "imgui.h"
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
@@ -21,7 +18,7 @@
 #include "AssetManager.h"
 #include "RuntimeState.h"
 #include "AudioAnalyzer.h"
-#include "KNNClassifier.h"
+#include "KNNClassifier.h" // Per la struct KNNPrediction
 
 class GraphicsManager {
 private:
@@ -29,15 +26,13 @@ private:
     int displayWidth;
     int displayHeight;
 
-    // --- Variabili GLFW e ImGui ---
     GLFWwindow* uiWindow;
-    GLFWwindow* projectorWindow; // Nuova finestra dedicata al proiettore
+    GLFWwindow* projectorWindow; 
     
     GLuint liveTextureID = 0;
     GLuint cueTextureID = 0;
-    GLuint projectorTexID = 0;   // Texture dedicata all'output del proiettore
+    GLuint projectorTexID = 0;   
 
-    // --- Variabili Shader Core Profile ---
     GLuint quadVAO, quadVBO, shaderProgram;
     void setupProjectorQuad();
 
@@ -56,6 +51,8 @@ public:
     cv::Mat applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm, bool isSpacePressed);
     
     void beginDashboard();
+    
+    // Firma aggiornata per ricevere le predizioni KNN
     void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred);    
     
     void showLive(const cv::Mat& frame);

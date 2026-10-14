@@ -7,19 +7,28 @@
 #include <string>
 #include <deque>
 #include <memory>
+#include <queue>
+#include <thread>
+#include <condition_variable>
+#include <atomic>
+#include <fstream>
 #include "BTrack.h" 
 
 struct AudioMetrics {
     float bpm = 0.0f;
     bool isBeat = false;
-    float peak = 0.0f;
     
-    // Le 5 Feature "Dream Team" (Tutte Auto-Scaled 0.0 - 1.0)
-    float rms = 0.0f;          // Energia Totale
-    float bandSubBass = 0.0f;  // Presenza di Cassa/Sub (HIGH)
-    float bandBass = 0.0f;     // Corpo del brano
-    float bandHighMid = 0.0f;  // Rullate e Riser (MID)
-    float spectralFlux = 0.0f; // Impatto/Transienti
+    // Metering
+    float peak = 0.0f;  // Mantenuto per compatibilità (max tra L e R)
+    float peakL = 0.0f; // Canale Sinistro
+    float peakR = 0.0f; // Canale Destro
+    
+    // Le 5 Feature "Dream Team"
+    float rms = 0.0f;          
+    float bandSubBass = 0.0f;  
+    float bandBass = 0.0f;     
+    float bandHighMid = 0.0f;  
+    float spectralFlux = 0.0f;
     
     // Manteniamo le altre bande solo per la UI opzionale, ma non per il KNN
     float bandLowMid = 0.0f;   
@@ -44,10 +53,19 @@ public:
     std::vector<AudioDeviceInfo> getInputDevices();
     unsigned int getCurrentDeviceId() const { return currentDeviceId; }
 
+    // --- METODI RECORDING ---
+    void startRecording(const std::string& baseFilename);
+    void stopRecording();
+    bool isRecordingActive() const { return isRecording; }
+    std::string getCurrentRecordFilename() const { return currentRecordFile; }
+    std::string getRecordingTimeFormatted() const;
+
 private:
     static int audioCallback(void* outputBuffer, void* inputBuffer, unsigned int nBufferFrames,
                              double streamTime, RtAudioStreamStatus status, void* userData);
-    void processBuffer(const float* buffer, unsigned int numFrames, double streamTime);
+    
+    // Nuova firma per accettare i picchi L e R
+    void processBuffer(const float* buffer, unsigned int numFrames, double streamTime, float peakL, float peakR);
 
     RtAudio adc;
     std::mutex metricsMutex;
@@ -60,11 +78,10 @@ private:
     std::vector<float> previousMagnitudes;
     unsigned int currentDeviceId = 0;
     
-    // Trackers Locali (per estrazione)
+    // Tracker Locali per aggregazione
     float maxBandEnergies[6] = {0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f}; 
-    float localMaxFlux = 0.001f;
 
-    // --- AUTO-SCALER GLOBALI (Volume Invariance) ---
+    // --- AUTO-SCALER GLOBALI (Picchi Assoluti) ---
     float globalMaxRms = 0.001f;
     float globalMaxSubBass = 0.001f;
     float globalMaxBass = 0.001f;
@@ -78,4 +95,23 @@ private:
     };
     
     std::deque<InstantBands> bandHistory;
+
+    // --- VARIABILI RECORDING ---
+    std::atomic<bool> isRecording{false};
+    std::atomic<bool> stopWriter{false};
+    std::mutex recordMutex;
+    std::condition_variable recordCV;
+    std::queue<std::vector<float>> recordQueue;
+    std::thread writerThread;
+    
+    std::string recordBasePath;
+    std::string currentRecordFile;
+    int recordPartIndex = 1;
+    uint32_t currentFileSamples = 0;
+    uint32_t totalRecordedSamples = 0;
+    std::ofstream currentWavFile;
+    
+    void writerLoop();
+    void openNextWavFile();
+    void closeCurrentWavFile();
 };

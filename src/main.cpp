@@ -158,12 +158,25 @@ int main() {
             // --- 5. INPUT HANDLING IMGUI ---
             ImGuiIO& io = ImGui::GetIO();
             
+            // Controllo sicurezza Auto Mode (Threshold minimo di Peak)
+            bool audioActive = (audioData.peak > 0.001f);
+            
+            // Spegne automaticamente l'Auto Mode se l'audio muore improvvisamente
+            if (state.isAutoMode && !audioActive) {
+                state.isAutoMode = false;
+                std::cout << "[WARNING] Auto Mode disattivato (Segnale audio assente).\n";
+            }
+
             if (ImGui::IsKeyPressed(ImGuiKey_Escape)) break;
             if (ImGui::IsKeyPressed(ImGuiKey_Enter)) state.transitionCueToLive();
 
             if (ImGui::IsKeyPressed(ImGuiKey_M)) {
-                state.isAutoMode = !state.isAutoMode;
-                if (state.isAutoMode) beatsSinceLastChange = 0; // Reset contatore all'attivazione
+                if (audioActive) {
+                    state.isAutoMode = !state.isAutoMode;
+                    if (state.isAutoMode) beatsSinceLastChange = 0; 
+                } else {
+                    std::cout << "[WARNING] Impossibile attivare Auto Mode: Nessun audio rilevato.\n";
+                }
             }
             
             if (ImGui::IsKeyPressed(ImGuiKey_J)) state.currentEnergyTarget = LOW;
