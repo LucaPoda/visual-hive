@@ -207,8 +207,8 @@ int main() {
             bool isSpacePressed = ImGui::IsKeyDown(ImGuiKey_Space);
             outputFrame = graphics.applyStrobeEffect(outputFrame, state, audioData.bpm, isSpacePressed);
 
-            graphics.endDashboard(outputFrame, previewFrame, state, audioData.bpm, audioAnalyzer, pred);            
-            graphics.showLive(outputFrame);
+            graphics.endDashboard(outputFrame, previewFrame, state, audioData.bpm, audioAnalyzer, pred, assetManager);            
+            graphics.showLive(outputFrame, state.isBlackout);
         }
 
     } catch (const std::exception& e) {

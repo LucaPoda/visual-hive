@@ -135,6 +135,7 @@ class Background {
     bool open();
     void close();
     cv::Mat get_next_frame();
+    cv::Mat get_current_frame() const;
 
     double get_fps();
 
@@ -194,9 +195,16 @@ class Foreground {
     int get_font_size() const { return fontSize; }
     void set_font_size(int size) { this->fontSize = size; }
 
+    // NUOVO: Permette di bypassare open() assegnando direttamente i dati dell'immagine
+    void set_raw_data(const cv::Mat& rawMat) {
+        this->data = rawMat.clone();
+        this->asset_source = "RAW_RAM_DATA";
+    }
+
     bool open();
     void close();
     cv::Mat get_next_frame();
+    cv::Mat get_current_frame() const;
 
     friend void to_json(nlohmann::json& j, const Foreground& f);
     friend void from_json(const nlohmann::json& j, Foreground& f);
@@ -268,6 +276,7 @@ public:
     cv::Mat blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor, bool forceOriginalColor = false);
 
     const AssetsConfig& getAssets() const { return assets; }
+    AssetsConfig& getMutableAssets() { return assets; } // Utile per modificare i global flags via UI
 
     std::optional<Background> getDefaultBackground();
     std::optional<Foreground> getDefaultForeground();
@@ -276,6 +285,9 @@ public:
     std::optional<Foreground> getForegroundByPressedKey(char key);
 
     static std::string analyzeFramePalette(const cv::Mat& frame);
+
+    // NUOVO: Supporto Testo Live
+    Foreground createTextForeground(const std::string& text, int fontSize);
 
 private:
     char displayAndGetKey(const std::string& windowName, const cv::Mat asset);

@@ -4,6 +4,7 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <chrono>
+#include <map>
 
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_GLCOREARB
@@ -35,6 +36,9 @@ private:
     GLuint cueTextureID = 0;
     GLuint projectorTexID = 0;   
 
+    std::map<std::string, GLuint> thumbnailCache;
+    GLuint getOrCreateThumbnail(const std::string& key, const cv::Mat& firstFrame, bool isGrayscale = false);
+
     GLuint quadVAO, quadVBO, shaderProgram;
     void setupProjectorQuad();
 
@@ -45,6 +49,8 @@ public:
     GraphicsManager(const AppConfig& config, const DisplayInfo& display);
     ~GraphicsManager();
 
+    void createProjectorWindow(int monitorIndex);
+
     double calculateBounceScale(RuntimeState& state, bool isBeat, double tempo, std::chrono::microseconds now);
 
     cv::Mat composeFrame(RuntimeState& state, AssetManager& assetMgr, double scale);
@@ -54,9 +60,9 @@ public:
     
     void beginDashboard();
     
-    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred);    
+    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr);    
     
-    void showLive(const cv::Mat& frame);
+    void showLive(const cv::Mat& frame, bool isBlackout);
     
     bool shouldCloseUI() const;
 };

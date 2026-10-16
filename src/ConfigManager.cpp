@@ -25,8 +25,8 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
         config.knnHistorySize = 30;
         config.strobeDurationMs = 50;
         config.knnKNeighbors = 21;
-        config.uiWindowWidth = 1280;
-        config.uiWindowHeight = 720;
+        config.uiWindowWidth = 1920;
+        config.uiWindowHeight = 1080;
         return;
     }
 
@@ -43,11 +43,11 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
 
     if (data.count("display")) {
         config.windowName = data["display"].value("window_name", "visual-hive Output");
-        config.uiWindowWidth = data["display"].value("uiWindowWidth", 1280);
-        config.uiWindowHeight = data["display"].value("uiWindowHeight", 720);
+        config.uiWindowWidth = data["display"].value("uiWindowWidth", 1920);
+        config.uiWindowHeight = data["display"].value("uiWindowHeight", 1080);
     } else {
-        config.uiWindowWidth = 1280;
-        config.uiWindowHeight = 720;
+        config.uiWindowWidth = 1920;
+        config.uiWindowHeight = 1080;
     }
     
     if (data.count("ableton_link")) {

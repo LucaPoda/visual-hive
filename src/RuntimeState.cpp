@@ -10,7 +10,7 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
       strobeFrameToggle(false),
       isAutoMode(false),           
       currentSongDynamicTarget(BUILD),
-      isBlackout(false),
+      isBlackout(false), // o true se vuoi il proiettore oscurato
       currentEventPhase(AMBIENT),
       animationStartTime(0),
       lastFrameTime(0),
@@ -24,15 +24,25 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
         throw std::runtime_error("Missing default background or foreground assets.");
     }
 
-    activeBackground = defaultBg.value();
-    activeForeground = defaultFg.value();
+    // 1. CUE viene caricato con il Background e Foreground di default
+    cueBackground = defaultBg.value();
+    cueForeground = defaultFg.value();
 
-    if (!activeBackground.open()) {
-        std::cerr << "Failed to open default background.\n";
+    if (cueBackground.has_value() && !cueBackground->open()) {
+        std::cerr << "Failed to open default cue background.\n";
     }
-    if (!activeForeground.open()) {
-        std::cerr << "Failed to open default foreground.\n";
+    if (cueForeground.has_value() && !cueForeground->open()) {
+        std::cerr << "Failed to open default cue foreground.\n";
     }
+
+    // 2. LIVE rimane vuoto: inizializzato a nero (#000000) e senza foreground
+    Background blackBg;
+    blackBg.set_source(SOLID_COLOR, "#000000");
+    blackBg.set_force_no_foreground(true);
+    blackBg.open();
+    activeBackground = blackBg;
+
+    activeForeground = Foreground(); // Nessun foreground caricato
     
     lastFrameTime = cv::getTickCount();
 }
@@ -117,12 +127,10 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
 void RuntimeState::transitionCueToLive() {
     if (cueBackground.has_value()) {
         switchBackground(cueBackground.value());
-        cueBackground = std::nullopt; 
     }
     
     if (cueForeground.has_value()) {
         activeForeground = cueForeground.value();
-        cueForeground = std::nullopt; 
     }
 }
 

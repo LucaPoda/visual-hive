@@ -4,6 +4,7 @@
 #include <iostream>
 #include <filesystem>
 #include <ctime>
+#include <algorithm>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -14,7 +15,7 @@ namespace fs = std::filesystem;
 extern KNNClassifier knnClassifier;
 
 GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& display) 
-: windowName(config.windowName), displayWidth(display.width), displayHeight(display.height), strobeDurationMs(config.strobeDurationMs)
+: windowName(config.windowName), displayWidth(display.width), displayHeight(display.height), strobeDurationMs(config.strobeDurationMs), projectorWindow(nullptr)
 {
     if (!glfwInit()) {
         std::cerr << "[ERROR] Impossibile inizializzare GLFW!" << std::endl;
@@ -35,21 +36,9 @@ GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& dis
         exit(1);
     }
     
-    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE); 
-    projectorWindow = glfwCreateWindow(displayWidth, displayHeight, windowName.c_str(), NULL, uiWindow);
-    if (!projectorWindow) {
-        glfwTerminate();
-        std::cerr << "[ERROR] Impossibile creare la finestra del proiettore GLFW!" << std::endl;
-        exit(1);
-    }
-    glfwSetWindowPos(projectorWindow, display.x, display.y);
-    
     glfwMakeContextCurrent(uiWindow);
     glfwSwapInterval(1);
     
-    setupProjectorQuad();
-    
-    glfwMakeContextCurrent(uiWindow); 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -68,13 +57,82 @@ GraphicsManager::~GraphicsManager() {
     if (cueTextureID != 0) glDeleteTextures(1, &cueTextureID);
     if (projectorTexID != 0) glDeleteTextures(1, &projectorTexID);
     
-    glDeleteVertexArrays(1, &quadVAO);
-    glDeleteBuffers(1, &quadVBO);
-    glDeleteProgram(shaderProgram);
+    for (auto& pair : thumbnailCache) {
+        glDeleteTextures(1, &pair.second);
+    }
+    thumbnailCache.clear();
     
-    glfwDestroyWindow(projectorWindow);
+    if (projectorWindow) {
+        glDeleteVertexArrays(1, &quadVAO);
+        glDeleteBuffers(1, &quadVBO);
+        glDeleteProgram(shaderProgram);
+        glfwDestroyWindow(projectorWindow);
+    }
+    
     glfwDestroyWindow(uiWindow);
     glfwTerminate();
+}
+
+GLuint GraphicsManager::getOrCreateThumbnail(const std::string& key, const cv::Mat& firstFrame, bool isGrayscale) {
+    std::string cacheKey = key + (isGrayscale ? "_gray" : "_color");
+    if (thumbnailCache.find(cacheKey) != thumbnailCache.end()) {
+        return thumbnailCache[cacheKey];
+    }
+    
+    cv::Mat resized;
+    cv::resize(firstFrame, resized, cv::Size(160, 90));
+    
+    if (isGrayscale) {
+        cv::Mat gray;
+        if (resized.channels() == 4) cv::cvtColor(resized, gray, cv::COLOR_BGRA2GRAY);
+        else if (resized.channels() == 3) cv::cvtColor(resized, gray, cv::COLOR_BGR2GRAY);
+        else gray = resized.clone();
+        cv::cvtColor(gray, resized, cv::COLOR_GRAY2RGBA);
+    } else {
+        if (resized.channels() == 3) {
+            cv::cvtColor(resized, resized, cv::COLOR_BGR2RGBA);
+        } else if (resized.channels() == 4) {
+            cv::cvtColor(resized, resized, cv::COLOR_BGRA2RGBA);
+        } else if (resized.channels() == 1) {
+            cv::cvtColor(resized, resized, cv::COLOR_GRAY2RGBA);
+        }
+    }
+    
+    GLuint texID;
+    glGenTextures(1, &texID);
+    glBindTexture(GL_TEXTURE_2D, texID);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, resized.cols, resized.rows, 0, GL_RGBA, GL_UNSIGNED_BYTE, resized.ptr());
+    
+    thumbnailCache[cacheKey] = texID;
+    return texID;
+}
+
+void GraphicsManager::createProjectorWindow(int monitorIndex) {
+    int count;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    if (monitorIndex < 0 || monitorIndex >= count) return;
+    
+    if (projectorWindow) {
+        glfwDestroyWindow(projectorWindow);
+        projectorWindow = nullptr;
+    }
+
+    GLFWmonitor* monitor = monitors[monitorIndex];
+    const GLFWvidmode* mode = glfwGetVideoMode(monitor);
+    displayWidth = mode->width;
+    displayHeight = mode->height;
+
+    glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
+    projectorWindow = glfwCreateWindow(displayWidth, displayHeight, windowName.c_str(), monitor, uiWindow);
+    if (!projectorWindow) {
+        std::cerr << "[ERROR] Impossibile creare la finestra del proiettore GLFW!" << std::endl;
+        return;
+    }
+
+    setupProjectorQuad();
+    glfwMakeContextCurrent(uiWindow);
 }
 
 void GraphicsManager::setupProjectorQuad() {
@@ -146,7 +204,7 @@ void GraphicsManager::beginDashboard() {
     ImGui::NewFrame();
 }
 
-void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred) {
+void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr) {
     glfwMakeContextCurrent(uiWindow);
     
     UpdateGLTexture(liveFrame, liveTextureID);
@@ -157,14 +215,25 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     
+    ImVec2 contentAvail = ImGui::GetContentRegionAvail();
+    float topHeight = contentAvail.y * 0.40f;
+    float bottomHeight = contentAvail.y - topHeight - 10.0f;
+    
+    // ================= TOP UI ================= //
     ImGui::Text("=== SISTEMA DI REGIA VJ ===");
     ImGui::Separator();
     
-    float previewWidth = (ImGui::GetContentRegionAvail().x / 2.0f) - 10.0f;
-    float previewHeight = previewWidth * ((float)displayHeight / (float)displayWidth);
+    ImGui::BeginChild("TopArea", ImVec2(0, topHeight), false);
+    ImGui::Columns(2, "TopColumns", false);
+    ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.70f);
     
-    ImGui::BeginChild("Previews", ImVec2(0, previewHeight + 40), true);
-    ImGui::Columns(2, "PreviewColumns", false);
+    ImGui::BeginChild("PreviewsArea", ImVec2(0, 0), true);
+    
+    float availWidth = ImGui::GetContentRegionAvail().x;
+    float previewWidth = (availWidth / 2.0f) - 10.0f;
+    float previewHeight = previewWidth * (9.0f / 16.0f);
+    
+    ImGui::Columns(2, "CueLiveCols", false);
     
     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "CUE (PREVIEW)");
     if (cueTextureID != 0) ImGui::Image((void*)(intptr_t)cueTextureID, ImVec2(previewWidth, previewHeight));
@@ -175,48 +244,60 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     if (liveTextureID != 0) ImGui::Image((void*)(intptr_t)liveTextureID, ImVec2(previewWidth, previewHeight));
     
     ImGui::Columns(1);
+    
+    ImGui::Dummy(ImVec2(0, 10));
+    if (ImGui::Button("Transizione CUE -> LIVE (INVIO)", ImVec2(-1, 30))) state.transitionCueToLive();
+    
     ImGui::EndChild();
+    
+    ImGui::NextColumn();
     
     AudioMetrics audioData = audioAnalyzer.getMetrics();
     float currentBpm = (audioData.bpm > 0.0f) ? audioData.bpm : static_cast<float>(bpm);
-    bool audioActive = (audioData.peak > 0.001f);
     
-    ImGui::BeginChild("BottomSection", ImVec2(0, 0), false);
-    ImGui::Columns(2, "BottomCols", false);
+    ImGui::BeginChild("MonitoringAuto", ImVec2(0, 0), true);
     
-    ImGui::BeginChild("RuntimeState", ImVec2(0, 0), true);
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "STATO RUNTIME");
+    // ================= SEZIONE OUTPUT & PROIEZIONE ================= //
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "OUTPUT & PROIEZIONE");
     ImGui::Separator();
     
-    ImGui::Text("Intensità Attuale: ");
-    ImGui::SameLine();
-    if (state.currentSongDynamicTarget == VERSE) ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "VERSE");
-    else if (state.currentSongDynamicTarget == BUILD) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "BUILD");
-    else ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "CHORUS");
+    static int monitorCount = 0;
+    static GLFWmonitor** availableMonitors = glfwGetMonitors(&monitorCount);
+    static int currentMonitorIdx = -1;
     
-    ImGui::Text("Background: [ %s ]", state.activeBackground.get_key().c_str());
-    if (!state.activeBackground.get_force_no_foreground()) {
-        std::string fgPath = state.activeForeground.get_foreground_path();
-        std::string fgFilename = fs::path(fgPath).filename().string();
-        if (fgFilename.empty()) fgFilename = fgPath;
-        ImGui::Text("Foreground: %s [ %s ]", fgFilename.c_str(), state.activeForeground.get_key().c_str());
-    } else {
-        ImGui::TextDisabled("Foreground: Disabilitato (Force No FG)");
+    std::string monitorPreviewText = (currentMonitorIdx >= 0 && currentMonitorIdx < monitorCount) 
+                                      ? glfwGetMonitorName(availableMonitors[currentMonitorIdx]) 
+                                      : "Seleziona Monitor...";
+    
+    ImGui::SetNextItemWidth(180.0f);
+    if (ImGui::BeginCombo("##MonitorOutput", monitorPreviewText.c_str())) {
+        for (int i = 0; i < monitorCount; ++i) {
+            bool isSelected = (currentMonitorIdx == i);
+            if (ImGui::Selectable(glfwGetMonitorName(availableMonitors[i]), isSelected)) {
+                currentMonitorIdx = i;
+                createProjectorWindow(i);
+            }
+            if (isSelected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
     }
     
-    bool strobeActive = ImGui::IsKeyDown(ImGuiKey_Space);
-    ImGui::Text("Strobo (Spazio): ");
     ImGui::SameLine();
-    if (strobeActive) ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "ON (%dms)", strobeDurationMs);
-    else ImGui::TextDisabled("OFF");
-    
-    ImGui::Spacing();
-    if (ImGui::Button("Transizione CUE -> LIVE (INVIO)", ImVec2(-1.0f, 24.0f))) {
-        state.transitionCueToLive();
+    if (ImGui::Button("Refresh##Monitors")) {
+        availableMonitors = glfwGetMonitors(&monitorCount);
     }
     
-    ImGui::Dummy(ImVec2(0.0f, 8.0f));
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO INPUT & BEAT");
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+    ImGui::Checkbox("BLACKOUT (Oscura Proiettore)", &state.isBlackout);
+    ImGui::PopStyleColor();
+    
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    ImGui::Separator();
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    
+    // ================= SEZIONE AUDIO INPUT & MONITORING ================= //
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO INPUT & MONITORING");
     ImGui::Separator();
     
     static std::vector<AudioDeviceInfo> audioDevices = audioAnalyzer.getInputDevices();
@@ -228,9 +309,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
     }
     
-    ImGui::Text("Sorgente:");
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 65.0f);
+    ImGui::SetNextItemWidth(200.0f);
     if (ImGui::BeginCombo("##AudioInterface", currentDeviceName.c_str())) {
         for (const auto& device : audioDevices) {
             bool isSelected = (currentDeviceName == device.name);
@@ -239,101 +318,21 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 audioAnalyzer.stop();
                 audioAnalyzer.start(device.id);
             }
-            if (isSelected) ImGui::SetItemDefaultFocus();
         }
         ImGui::EndCombo();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Refresh", ImVec2(55.0f, 0.0f))) audioDevices = audioAnalyzer.getInputDevices();
+    if (ImGui::Button("Refresh")) audioDevices = audioAnalyzer.getInputDevices();
     
-    static float peakHoldL = 0.0f;
-    static float peakHoldR = 0.0f;
-
-    if (audioData.peakL > peakHoldL) peakHoldL = audioData.peakL;
-    else peakHoldL *= 0.999f;
-
-    if (audioData.peakR > peakHoldR) peakHoldR = audioData.peakR;
-    else peakHoldR *= 0.999f;
-
-    float maxHold = std::max(peakHoldL, peakHoldR);
-    float maxHoldDb = (maxHold > 0.0001f) ? 20.0f * std::log10(maxHold) : -60.0f;
-    
-    char avgBuf[32];
-    if (maxHoldDb <= -59.0f) snprintf(avgBuf, sizeof(avgBuf), "-INF");
-    else snprintf(avgBuf, sizeof(avgBuf), "%+.1f dB", maxHoldDb);
-
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Main In (dBFS):");
     ImGui::SameLine();
-    
-    ImVec4 avgColor;
-    if (maxHoldDb >= -0.1f) avgColor = ImVec4(1.0f, 0.1f, 0.1f, 1.0f); 
-    else if (maxHoldDb > -6.0f) avgColor = ImVec4(1.0f, 0.8f, 0.1f, 1.0f);
-    else avgColor = ImVec4(0.2f, 1.0f, 0.2f, 1.0f); 
-    
-    ImGui::TextColored(avgColor, "[ %s ]", avgBuf);
-
-    auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
-        float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
-        float holdDb = (linearHold > 0.0001f) ? 20.0f * std::log10(linearHold) : -60.0f;
-        
-        float minDb = -48.0f; 
-        float maxDb = 0.0f;
-        float fraction = std::clamp((db - minDb) / (maxDb - minDb), 0.0f, 1.0f);
-        float holdFraction = std::clamp((holdDb - minDb) / (maxDb - minDb), 0.0f, 1.0f);
-
-        ImVec4 color;
-        if (db >= -0.1f) color = ImVec4(1.0f, 0.1f, 0.1f, 1.0f); 
-        else if (db > -6.0f) color = ImVec4(1.0f, 0.8f, 0.1f, 1.0f);
-        else color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f); 
-
-        ImGui::Text("%s", label);
-        ImGui::SameLine(25.0f);
-        
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
-        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 8.0f), ""); 
-        ImGui::PopStyleColor();
-
-        if (holdFraction > 0.0f) {
-            ImVec2 p_min = ImGui::GetItemRectMin();
-            ImVec2 p_max = ImGui::GetItemRectMax();
-            float tick_x = p_min.x + (p_max.x - p_min.x) * holdFraction;
-            if (tick_x > p_max.x - 1.0f) tick_x = p_max.x - 1.0f;
-            ImGui::GetWindowDrawList()->AddLine(
-                ImVec2(tick_x, p_min.y), 
-                ImVec2(tick_x, p_max.y), 
-                IM_COL32(255, 255, 255, 255), 
-                2.0f
-            );
-        }
-    };
-
-    drawDbMeter("L", audioData.peakL, peakHoldL);
-    drawDbMeter("R", audioData.peakR, peakHoldR);
-    
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    
-    ImGui::Text("BPM Attuali: %.1f", currentBpm);
-    ImGui::Text("Bounce (B): ");
-    ImGui::SameLine();
-    if (state.isBounceActive && currentBpm > 0.0f) ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "ON");
-    else if (state.isBounceActive && currentBpm <= 0.0f) ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "OFF (No BPM)");
-    else ImGui::TextDisabled("OFF");
-
-    ImGui::Dummy(ImVec2(0.0f, 8.0f));
-    ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "REGISTRAZIONE AUDIO (RAW .WAV)");
-    ImGui::Separator();
-    
     if (audioAnalyzer.isRecordingActive()) {
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        if (ImGui::Button("Stop Registrazione", ImVec2(-1, 30))) {
-            audioAnalyzer.stopRecording();
-        }
+        if (ImGui::Button("Stop Rec")) audioAnalyzer.stopRecording();
         ImGui::PopStyleColor();
-        
-        ImGui::Text("File: %s", audioAnalyzer.getCurrentRecordFilename().c_str());
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Tempo: %s (in corso...)", audioAnalyzer.getRecordingTimeFormatted().c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "[%s]", audioAnalyzer.getRecordingTimeFormatted().c_str());
     } else {
-        if (ImGui::Button("Avvia Registrazione", ImVec2(-1, 30))) {
+        if (ImGui::Button("Rec .WAV")) {
             auto t = std::time(nullptr);
             auto tm = *std::localtime(&t);
             char timeBuf[64];
@@ -342,153 +341,248 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
     }
 
-    ImGui::EndChild();
-    ImGui::NextColumn();
+    static float peakHoldL = 0.0f, peakHoldR = 0.0f;
+    if (audioData.peakL > peakHoldL) peakHoldL = audioData.peakL; else peakHoldL *= 0.999f;
+    if (audioData.peakR > peakHoldR) peakHoldR = audioData.peakR; else peakHoldR *= 0.999f;
 
-    ImGui::BeginChild("AutoModeML", ImVec2(0, 0), true);
-    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
-    ImGui::Separator();
-    
-    if (!audioActive) ImGui::BeginDisabled();
-    ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
-    if (!audioActive) {
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), " (Disabilitato: Muto)");
-    }
-
-    ImGui::SameLine();
-    static std::vector<std::string> csvPresets = {"knn_dataset.csv"};
-    static std::string currentPreset = "knn_dataset.csv";
-    static bool presetsScanned = false;
-    auto scanCsvPresets = [&]() {
-        csvPresets.clear();
-        for (const auto& entry : fs::directory_iterator(".")) {
-            if (entry.is_regular_file() && entry.path().extension() == ".csv") {
-                csvPresets.push_back(entry.path().filename().string());
-            }
-        }
-        if (csvPresets.empty()) csvPresets.push_back("knn_dataset.csv");
-    };
-    if (!presetsScanned) { scanCsvPresets(); presetsScanned = true; }
-    
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::BeginCombo("##PresetCSV", currentPreset.c_str())) {
-        for (const auto& preset : csvPresets) {
-            bool isSelected = (currentPreset == preset);
-            if (ImGui::Selectable(preset.c_str(), isSelected)) {
-                currentPreset = preset;
-                knnClassifier.loadDataset(currentPreset);
-            }
-            if (isSelected) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Nuovo Dataset")) ImGui::OpenPopup("Training Dataset KNN");
-    
-    ImGui::Dummy(ImVec2(0.0f, 4.0f));
-    
-    std::string predWinStr = (pred.winner == VERSE) ? "VERSE" : (pred.winner == BUILD) ? "BUILD" : (pred.winner == CHORUS) ? "CHORUS" : "MANUAL";
-    ImVec4 winColor = (pred.winner == VERSE) ? ImVec4(0.2f, 0.6f, 1.0f, 1.0f) :
-                     (pred.winner == BUILD) ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
-    if (pred.winner == MANUAL) winColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
-                     
-    ImGui::Text("CLASSE VINCENTE KNN:");
-    ImGui::SameLine();
-    ImGui::SetWindowFontScale(1.25f);
-    ImGui::TextColored(winColor, "[ %s ]", predWinStr.c_str());
-    ImGui::SetWindowFontScale(1.0f);
-    
-    char bufVerse[32], bufBuild[32], bufChorus[32];
-    snprintf(bufVerse, sizeof(bufVerse), "VERSE (%.0f%%)", pred.confVerse * 100.0f);
-    snprintf(bufBuild, sizeof(bufBuild), "BUILD (%.0f%%)", pred.confBuild * 100.0f);
-    snprintf(bufChorus, sizeof(bufChorus), "CHORUS (%.0f%%)", pred.confChorus * 100.0f);
-    
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.2f, 0.6f, 1.0f, 1.0f));
-    ImGui::ProgressBar(pred.confVerse, ImVec2(-1.0f, 12.0f), bufVerse);
-    ImGui::PopStyleColor();
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
-    ImGui::ProgressBar(pred.confBuild, ImVec2(-1.0f, 12.0f), bufBuild);
-    ImGui::PopStyleColor();
-    ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-    ImGui::ProgressBar(pred.confChorus, ImVec2(-1.0f, 12.0f), bufChorus);
-    ImGui::PopStyleColor();
-    
-    ImGui::Dummy(ImVec2(0.0f, 10.0f));
-    ImGui::TextColored(ImVec4(0.9f, 0.5f, 0.9f, 1.0f), "KNN ACTIVE FEATURES (DATASET)");
-    ImGui::Separator();
-
-    auto drawCompactMeter = [](const char* label, float val, const ImVec4& col) {
-        ImGui::Text("%-12s", label); 
-        ImGui::SameLine(90.0f);
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, col);
-        ImGui::ProgressBar(std::clamp(val, 0.0f, 1.0f), ImVec2(-1.0f, 6.0f), "");
+    auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
+        float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
+        float fraction = std::clamp((db + 48.0f) / 48.0f, 0.0f, 1.0f);
+        ImVec4 color = (db >= -0.1f) ? ImVec4(1.0f, 0.1f, 0.1f, 1.0f) : (db > -6.0f) ? ImVec4(1.0f, 0.8f, 0.1f, 1.0f) : ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+        ImGui::Text("%s", label); ImGui::SameLine(25.0f);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
+        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 8.0f), ""); 
         ImGui::PopStyleColor();
     };
-
-    ImGui::Columns(2, "KNNFeaturesGrid", false);
+    drawDbMeter("L", audioData.peakL, peakHoldL);
+    drawDbMeter("R", audioData.peakR, peakHoldR);
     
-    drawCompactMeter("RMS (Volume)", audioData.rms, ImVec4(0.9f, 0.9f, 0.9f, 1.0f)); 
-    drawCompactMeter("SubBass",      audioData.bandSubBass, ImVec4(0.6f, 0.2f, 0.8f, 1.0f)); 
-    drawCompactMeter("Bass",         audioData.bandBass, ImVec4(0.8f, 0.3f, 0.3f, 1.0f)); 
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "CONFIGURAZIONE LIVE");
+    ImGui::Separator();
+    
+    ImGui::Text("Fase Evento:");
+    int ep = static_cast<int>(state.currentEventPhase);
+    if (ImGui::RadioButton("Ambient", &ep, AMBIENT)) state.currentEventPhase = AMBIENT; ImGui::SameLine();
+    if (ImGui::RadioButton("Low", &ep, LOW)) state.currentEventPhase = LOW; ImGui::SameLine();
+    if (ImGui::RadioButton("Mid", &ep, MID)) state.currentEventPhase = MID; ImGui::SameLine();
+    if (ImGui::RadioButton("High", &ep, HIGH)) state.currentEventPhase = HIGH;
+    
+    ImGui::Text("Colori Attivi:");
+    const char* colors[] = {"Bianco", "Nero", "Rosso", "Verde", "Blu", "Viola", "Giallo", "Arancione"};
+    for (int i = 0; i < 8; i++) {
+        bool active = std::find(state.activePalettes.begin(), state.activePalettes.end(), colors[i]) != state.activePalettes.end();
+        if (ImGui::Checkbox(colors[i], &active)) {
+            if (active) state.activePalettes.push_back(colors[i]);
+            else state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), colors[i]), state.activePalettes.end());
+        }
+        if ((i + 1) % 4 != 0) ImGui::SameLine();
+    }
+    
+    ImGui::Dummy(ImVec2(0.0f, 10.0f));
+    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
+    ImGui::Separator();
+    ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
+    ImGui::EndChild();
+    
+    ImGui::EndChild(); // TopArea
+    
+    ImGui::Columns(1);
+    
+    // ================= BOTTOM UI: LIBRERIE DECK E TESTO ================= //
+    ImGui::Dummy(ImVec2(0.0f, 5.0f));
+    ImGui::Separator();
+    
+    ImGui::BeginChild("BottomArea", ImVec2(0, bottomHeight), false);
+    ImGui::Columns(2, "BottomColumns", false);
+    ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.70f);
+    
+    // SEZIONE BACKGROUND (Sinistra - 70%)
+    ImGui::BeginChild("BackgroundDeckArea", ImVec2(0, 0), true);
+    ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.6f, 1.0f), "BACKGROUND DECK");
+    
+    if (ImGui::BeginTabBar("BgTabs")) {
+        const char* tabNames[] = {"TUTTI", "AMBIENT", "LOW", "MID", "HIGH", "CATTURE FINESTRA"};
+        for (int t = 0; t < 6; ++t) {
+            if (ImGui::BeginTabItem(tabNames[t])) {
+                auto& bgs = assetMgr.getMutableAssets().get_mutable_backgrounds();
+                
+                if (t == 5) {
+                    for (auto& [key, bg] : bgs) {
+                        if (bg.get_type() == WINDOW_CAPTURE) {
+                            ImGui::PushID(key.c_str());
+                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Sorgente: %s", key.c_str());
+                            ImGui::Text("Applicazione Target: %s", bg.get_target_app_name().c_str());
+                            ImGui::Text("Finestra Target: %s", bg.get_target_window_name().c_str());
+                            
+                            if (ImGui::Button("Invia in CUE", ImVec2(200, 30))) {
+                                state.switchCueBackground(bg);
+                            }
+                            ImGui::Dummy(ImVec2(0, 5));
+                            ImGui::Separator();
+                            ImGui::PopID();
+                        }
+                    }
+                } else {
+                    ImGui::Columns(3, "BgCols", true);
+                    ImGui::Text("VERSE"); ImGui::NextColumn();
+                    ImGui::Text("BUILD"); ImGui::NextColumn();
+                    ImGui::Text("CHORUS"); ImGui::NextColumn();
+                    ImGui::Separator();
+                    
+                    std::map<std::string, std::vector<std::string>> verseMap, buildMap, chorusMap;
+                    
+                    for (auto& [key, bg] : bgs) {
+                        if (bg.get_type() == WINDOW_CAPTURE) continue; 
+                        
+                        bool match = (t == 0);
+                        if (!match) {
+                            EventPhase phase = bg.get_event_phase();
+                            if (t == 1 && phase == AMBIENT) match = true;
+                            if (t == 2 && phase == LOW) match = true;
+                            if (t == 3 && phase == MID) match = true;
+                            if (t == 4 && phase == HIGH) match = true;
+                        }
+                        if (match) {
+                            SongDynamic dyn = bg.get_song_dynamic();
+                            std::string pal = bg.get_palette_color().empty() ? "Nessuna Palette" : bg.get_palette_color();
+                            if (dyn == VERSE || dyn == MANUAL) verseMap[pal].push_back(key);
+                            else if (dyn == BUILD) buildMap[pal].push_back(key);
+                            else if (dyn == CHORUS) chorusMap[pal].push_back(key);
+                        }
+                    }
+                    
+                    auto renderGroup = [&](std::map<std::string, std::vector<std::string>>& groupMap) {
+                        for (auto& [pal, keys] : groupMap) {
+                            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "-- %s --", pal.c_str());
+                            int itemCount = 0;
+                            for (const auto& key : keys) {
+                                Background& bg = bgs[key];
+                                bool enabled = bg.get_is_enabled_global();
+                                
+                                std::string cacheKey = key + (!enabled ? "_gray" : "_color");
+                                GLuint tex = 0;
+                                auto cacheIt = thumbnailCache.find(cacheKey);
+                                if (cacheIt != thumbnailCache.end()) {
+                                    tex = cacheIt->second;
+                                } else {
+                                    tex = getOrCreateThumbnail(key, bg.get_first_frame(), !enabled);
+                                }
+                                
+                                ImGui::PushID(key.c_str());
+                                if (itemCount > 0 && itemCount % 2 != 0) ImGui::SameLine();
+                                
+                                if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) {
+                                    state.switchCueBackground(bg);
+                                }
+                                
+                                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+                                    bg.set_is_enabled_global(!enabled);
+                                }
+                                
+                                if (!enabled) {
+                                    ImVec2 p_min = ImGui::GetItemRectMin();
+                                    ImVec2 p_max = ImGui::GetItemRectMax();
+                                    ImVec2 center = ImVec2((p_min.x + p_max.x) * 0.5f, (p_min.y + p_max.y) * 0.5f);
+                                    float radius = 30.0f;
+                                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                                    drawList->AddCircle(center, radius, IM_COL32(255, 0, 0, 200), 0, 4.0f);
+                                    drawList->AddLine(ImVec2(center.x - radius*0.7f, center.y - radius*0.7f), 
+                                                      ImVec2(center.x + radius*0.7f, center.y + radius*0.7f), 
+                                                      IM_COL32(255, 0, 0, 200), 4.0f);
+                                }
+                                ImGui::PopID();
+                                itemCount++;
+                            }
+                        }
+                    };
+                    
+                    renderGroup(verseMap); ImGui::NextColumn();
+                    renderGroup(buildMap); ImGui::NextColumn();
+                    renderGroup(chorusMap); ImGui::NextColumn();
+                    
+                    ImGui::Columns(1);
+                }
+                ImGui::EndTabItem();
+            }
+        }
+        ImGui::EndTabBar();
+    }
+    ImGui::EndChild();
     
     ImGui::NextColumn();
     
-    drawCompactMeter("HighMid",      audioData.bandHighMid, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); 
-    drawCompactMeter("Spec Flux",    audioData.spectralFlux, ImVec4(1.0f, 0.2f, 0.8f, 1.0f)); 
-
-    ImGui::Columns(1);
-
-    if (ImGui::BeginPopupModal("Training Dataset KNN", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        std::map<SongDynamic, int> counts = knnClassifier.getClassCounts();
-        int totalSamples = counts[VERSE] + counts[BUILD] + counts[CHORUS];
-        float estimatedKB = (totalSamples * 64.0f) / 1024.0f;
-        ImGui::Text("Statistiche Dataset Temporaneo:");
-        ImGui::BulletText("VERSE:  %d samples", counts[VERSE]);
-        ImGui::BulletText("BUILD:  %d samples", counts[BUILD]);
-        ImGui::BulletText("CHORUS: %d samples", counts[CHORUS]);
-        ImGui::TextDisabled("Totale: %d samples (Dimensione stimata: %.2f KB)", totalSamples, estimatedKB);
-        ImGui::Separator();
-        ImGui::Text("Clicca o tieni premuto per catturare (~4 sample/sec):");
-        static float captureTimer = 0.0f;
-        captureTimer += ImGui::GetIO().DeltaTime;
-        auto handleCaptureButton = [&](const char* btnLabel, SongDynamic level, const ImVec4& btnCol) {
-            ImGui::PushStyleColor(ImGuiCol_Button, btnCol);
-            bool clicked = ImGui::Button(btnLabel, ImVec2(125, 45));
-            bool held = ImGui::IsItemActive(); 
-            ImGui::PopStyleColor();
-            if (clicked || (held && captureTimer >= 0.25f)) {
-                knnClassifier.addSample(audioData, level);
-                captureTimer = 0.0f;
-            }
-        };
-        handleCaptureButton("Registra VERSE",  VERSE,  ImVec4(0.15f, 0.45f, 0.80f, 1.0f));
-        ImGui::SameLine();
-        handleCaptureButton("Registra BUILD",  BUILD,  ImVec4(0.75f, 0.60f, 0.05f, 1.0f));
-        ImGui::SameLine();
-        handleCaptureButton("Registra CHORUS", CHORUS, ImVec4(0.80f, 0.20f, 0.20f, 1.0f));
-        ImGui::Separator();
-        if (ImGui::Button("Salva Dataset", ImVec2(190, 30))) {
-            knnClassifier.commitTemporaryDataset();
-            knnClassifier.saveDataset(currentPreset);
-            scanCsvPresets();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::SetItemDefaultFocus();
-        ImGui::SameLine();
-        if (ImGui::Button("Annulla", ImVec2(190, 30))) {
-            knnClassifier.clearTemporaryDataset();
-            ImGui::CloseCurrentPopup();
-        }
-        ImGui::EndPopup();
+    // SEZIONE FOREGROUND & TEXT (Destra - 30%)
+    ImGui::BeginChild("TextGenArea", ImVec2(0, 110), true);
+    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "GENERATORE TESTO (LIVE)");
+    
+    static char textBuffer[256] = "";
+    static int fontSize = 5;
+    
+    ImGui::InputText("Testo", textBuffer, sizeof(textBuffer));
+    ImGui::SliderInt("Size", &fontSize, 1, 10);
+    
+    if (ImGui::Button("Invia Testo in CUE", ImVec2(-1, 30))) {
+        Foreground textFg = assetMgr.createTextForeground(std::string(textBuffer), fontSize);
+        state.switchCueForeground(textFg);
     }
-    ImGui::EndChild(); 
+    ImGui::EndChild();
+    
+    ImGui::BeginChild("ForegroundDeckArea", ImVec2(0, 0), true);
+    ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "FOREGROUND DECK");
+    
+    auto& mutableFgs = assetMgr.getMutableAssets().get_mutable_foregrounds();
+    
+    int itemCount = 0;
+    for (auto& [key, fg] : mutableFgs) {
+        bool enabled = fg.get_is_enabled_global();
+        
+        std::string cacheKey = key + (!enabled ? "_gray" : "_color");
+        GLuint tex = 0;
+        auto cacheIt = thumbnailCache.find(cacheKey);
+        
+        if (cacheIt != thumbnailCache.end()) {
+            tex = cacheIt->second;
+        } else {
+            cv::Mat firstFrame = fg.get_first_frame();
+            if (firstFrame.empty()) continue; 
+            tex = getOrCreateThumbnail(key, firstFrame, !enabled);
+        }
+        
+        ImGui::PushID(key.c_str());
+        if (itemCount > 0 && itemCount % 2 != 0) ImGui::SameLine();
+        
+        if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) {
+            state.switchCueForeground(fg);
+        }
+        
+        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) {
+            fg.set_is_enabled_global(!enabled);
+        }
+        
+        if (!enabled) {
+            ImVec2 p_min = ImGui::GetItemRectMin();
+            ImVec2 p_max = ImGui::GetItemRectMax();
+            ImVec2 center = ImVec2((p_min.x + p_max.x) * 0.5f, (p_min.y + p_max.y) * 0.5f);
+            float radius = 25.0f;
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            drawList->AddCircle(center, radius, IM_COL32(255, 0, 0, 200), 0, 4.0f);
+            drawList->AddLine(ImVec2(center.x - radius*0.7f, center.y - radius*0.7f), 
+                              ImVec2(center.x + radius*0.7f, center.y + radius*0.7f), 
+                              IM_COL32(255, 0, 0, 200), 4.0f);
+        }
+        ImGui::PopID();
+        itemCount++;
+    }
+    ImGui::EndChild();
+    
+    ImGui::EndChild(); // BottomArea
+    
     ImGui::Columns(1);
-    ImGui::EndChild(); 
-
+    
     ImGui::End(); 
     ImGui::Render();
+    
     int display_w, display_h;
     glfwGetFramebufferSize(uiWindow, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
@@ -498,26 +592,35 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     glfwSwapBuffers(uiWindow);
 }
 
-void GraphicsManager::showLive(const cv::Mat& frame) {
-    if (frame.empty()) return;
+void GraphicsManager::showLive(const cv::Mat& frame, bool isBlackout) {
+    if (!projectorWindow) return;
+
     glfwMakeContextCurrent(projectorWindow);
-    UpdateGLTexture(frame, projectorTexID);
     int display_w, display_h;
     glfwGetFramebufferSize(projectorWindow, &display_w, &display_h);
     glViewport(0, 0, display_w, display_h);
-    glClear(GL_COLOR_BUFFER_BIT);
-    glUseProgram(shaderProgram);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, projectorTexID);
-    glUniform1i(glGetUniformLocation(shaderProgram, "texMap"), 0);
-    glBindVertexArray(quadVAO);
-    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+
+    if (isBlackout) {
+        glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+    } else {
+        if (frame.empty()) return;
+        UpdateGLTexture(frame, projectorTexID);
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUseProgram(shaderProgram);
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, projectorTexID);
+        glUniform1i(glGetUniformLocation(shaderProgram, "texMap"), 0);
+        glBindVertexArray(quadVAO);
+        glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    }
+    
     glfwSwapBuffers(projectorWindow);
     glfwMakeContextCurrent(uiWindow);
 }
 
 bool GraphicsManager::shouldCloseUI() const {
-    return glfwWindowShouldClose(uiWindow) || glfwWindowShouldClose(projectorWindow);
+    return glfwWindowShouldClose(uiWindow) || (projectorWindow && glfwWindowShouldClose(projectorWindow));
 }
 
 cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor) {
@@ -581,15 +684,33 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
 }
 
 cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
-    Background& bgToUse = state.cueBackground.has_value() ? state.cueBackground.value() : state.activeBackground;
-    cv::Mat bgFrame = bgToUse.get_next_frame();
+    if (!state.cueBackground.has_value()) {
+        return cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(0, 0, 0));
+    }
+
+    Background& bgToUse = state.cueBackground.value();
+    cv::Mat bgFrame;
+
+    // Se LIVE e CUE condividono la stessa sorgente, CUE riutilizza il frame corrente senza farlo avanzare
+    if (state.activeBackground.get_source() == bgToUse.get_source()) {
+        bgFrame = state.activeBackground.get_current_frame();
+    } else {
+        bgFrame = bgToUse.get_next_frame();
+    }
+
     if (bgFrame.empty()) {
-        bgFrame = cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(50, 50, 50));
+        bgFrame = cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(0, 0, 0));
     }
     cv::Mat outputFrame = scaleToFit(bgFrame, displayWidth, displayHeight);
-    if (!bgToUse.get_force_no_foreground()) {
-        Foreground& fgToUse = state.cueForeground.has_value() ? state.cueForeground.value() : state.activeForeground;
-        cv::Mat fgFrame = fgToUse.get_next_frame();
+
+    if (!bgToUse.get_force_no_foreground() && state.cueForeground.has_value()) {
+        Foreground& fgToUse = state.cueForeground.value();
+        cv::Mat fgFrame;
+        if (state.activeForeground.get_foreground_path() == fgToUse.get_foreground_path()) {
+            fgFrame = state.activeForeground.get_current_frame();
+        } else {
+            fgFrame = fgToUse.get_next_frame();
+        }
         outputFrame = assetMgr.blend(
             outputFrame,
             fgFrame,

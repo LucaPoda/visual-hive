@@ -170,6 +170,9 @@ const cv::Mat Background::get_first_frame() const {
             exit(-1);
         }
     }
+    else if (this->type == WINDOW_CAPTURE) {
+        return cv::Mat(); 
+    }
     else {
         return this->get_solid_color_frame(1920, 1080, this->get_background_color().value()); 
     }
@@ -251,7 +254,8 @@ cv::Mat Background::get_next_frame() {
         cv::Mat frame = getLatestWindowFrame();
 
         if (frame.empty()) {
-            return this->get_solid_color_frame(1920, 1080, cv::Scalar(0,0,0));
+            currentVideoFrame = this->get_solid_color_frame(1920, 1080, cv::Scalar(0,0,0));
+            return currentVideoFrame;
         }
         
         cv::Mat gray, mask;
@@ -259,11 +263,22 @@ cv::Mat Background::get_next_frame() {
         cv::threshold(gray, mask, 0, 255, cv::THRESH_BINARY);
         cv::Rect contentBox = cv::boundingRect(mask);
         
-        return frame(contentBox);
+        currentVideoFrame = frame(contentBox).clone();
+        return currentVideoFrame;
     }
     else {
         return this->solid_color_img;
     }
+}
+
+cv::Mat Background::get_current_frame() const {
+    if (this->type == VIDEO_LOOP || this->type == WINDOW_CAPTURE) {
+        if (!currentVideoFrame.empty()) {
+            return currentVideoFrame.clone();
+        }
+        return this->get_solid_color_frame(1920, 1080, cv::Scalar(0, 0, 0));
+    }
+    return this->solid_color_img;
 }
 
 const cv::Mat Background::get_solid_color_frame(int width, int height, const cv::Scalar& color) const {
@@ -285,17 +300,17 @@ const std::string Foreground::get_foreground_path() const {
 }
 
 const cv::Mat Foreground::get_first_frame() const {
+    if (this->asset_source == "RAW_RAM_DATA") {
+        return cv::Mat(); 
+    }
     return cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
 }
 
 bool Foreground::open() {
     this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
-    
-    if (this->data.empty()) {
-        return false;
-    }
-    return true;
+    return !this->data.empty();
 }
+
 void Foreground::close() {
 }
 
@@ -305,6 +320,10 @@ cv::Mat Foreground::get_next_frame() {
     }
     return this->data;
 }   
+
+cv::Mat Foreground::get_current_frame() const {
+    return this->data;
+}
 
 AssetManager::AssetManager(const AppConfig& config) : appConfig(config) {
    std::ifstream jsonFile(config.assetsConfigFile);
@@ -639,4 +658,23 @@ std::string AssetManager::analyzeFramePalette(const cv::Mat& frame) {
         if (c1 > c2) std::swap(c1, c2);
         return c1 + "-" + c2;
     }
+}
+
+Foreground AssetManager::createTextForeground(const std::string& text, int fontSize) {
+    cv::Mat frame = cv::Mat::zeros(1080, 1920, CV_8UC3);
+    int baseline = 0;
+    double fontScale = static_cast<double>(fontSize);
+    int thickness = fontSize > 4 ? 4 : 2;
+    
+    cv::Size textSize = cv::getTextSize(text, cv::FONT_HERSHEY_COMPLEX, fontScale, thickness, &baseline);
+    cv::Point textOrg((frame.cols - textSize.width) / 2, (frame.rows + textSize.height) / 2);
+    
+    cv::putText(frame, text, textOrg, cv::FONT_HERSHEY_COMPLEX, fontScale, cv::Scalar(255, 255, 255), thickness);
+    
+    Foreground fg;
+    fg.set_key("TEXT_" + text);
+    fg.set_scale(1.0);
+    fg.set_raw_data(frame);
+    fg.set_force_original_colors(true);
+    return fg;
 }
