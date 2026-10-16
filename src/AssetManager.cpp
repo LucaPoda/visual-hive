@@ -1,3 +1,4 @@
+// AssetManager.cpp
 #include "AssetManager.h"
 
 #include <iostream>
@@ -5,6 +6,7 @@
 #include <sstream>
 #include <filesystem>
 #include <string>
+#include <algorithm>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
@@ -568,4 +570,73 @@ std::optional<Foreground> AssetManager::getForegroundByPressedKey(char pressed_k
 char AssetManager::displayAndGetKey(const std::string& windowName, const cv::Mat asset) {
     cv::imshow(windowName, asset);
     return cv::waitKey(0);
+}
+
+std::string AssetManager::analyzeFramePalette(const cv::Mat& frame) {
+    if (frame.empty()) return "";
+
+    cv::Mat resized;
+    cv::resize(frame, resized, cv::Size(64, 64), 0, 0, cv::INTER_NEAREST);
+    if (resized.channels() == 4) {
+        cv::cvtColor(resized, resized, cv::COLOR_BGRA2BGR);
+    } else if (resized.channels() == 1) {
+        cv::cvtColor(resized, resized, cv::COLOR_GRAY2BGR);
+    }
+
+    struct NamedColor {
+        std::string name;
+        cv::Vec3b bgr;
+    };
+
+    std::vector<NamedColor> baseColors = {
+        {"Bianco", cv::Vec3b(255, 255, 255)},
+        {"Nero", cv::Vec3b(0, 0, 0)},
+        {"Rosso", cv::Vec3b(0, 0, 255)},
+        {"Verde", cv::Vec3b(0, 255, 0)},
+        {"Blu", cv::Vec3b(255, 0, 0)},
+        {"Viola", cv::Vec3b(128, 0, 128)},
+        {"Giallo", cv::Vec3b(0, 255, 255)},
+        {"Arancione", cv::Vec3b(0, 165, 255)}
+    };
+
+    std::map<std::string, int> counts;
+    for (const auto& c : baseColors) counts[c.name] = 0;
+
+    for (int y = 0; y < resized.rows; ++y) {
+        for (int x = 0; x < resized.cols; ++x) {
+            cv::Vec3b pixel = resized.at<cv::Vec3b>(y, x);
+            
+            int minDist = std::numeric_limits<int>::max();
+            std::string closestName = "";
+            
+            for (const auto& bc : baseColors) {
+                int db = pixel[0] - bc.bgr[0];
+                int dg = pixel[1] - bc.bgr[1];
+                int dr = pixel[2] - bc.bgr[2];
+                int distSq = db*db + dg*dg + dr*dr;
+                
+                if (distSq < minDist) {
+                    minDist = distSq;
+                    closestName = bc.name;
+                }
+            }
+            counts[closestName]++;
+        }
+    }
+
+    std::vector<std::pair<std::string, int>> sortedCounts(counts.begin(), counts.end());
+    std::sort(sortedCounts.begin(), sortedCounts.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second;
+    });
+
+    int threshold = (64 * 64) / 10;
+
+    if (sortedCounts[1].second < threshold) {
+        return sortedCounts[0].first;
+    } else {
+        std::string c1 = sortedCounts[0].first;
+        std::string c2 = sortedCounts[1].first;
+        if (c1 > c2) std::swap(c1, c2);
+        return c1 + "-" + c2;
+    }
 }

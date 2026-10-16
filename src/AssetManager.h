@@ -1,3 +1,4 @@
+// AssetManager.h
 #pragma once
 
 #include <vector>
@@ -273,6 +274,8 @@ public:
 
     std::optional<Background> getBackroundByPressedKey(char key);
     std::optional<Foreground> getForegroundByPressedKey(char key);
+
+    static std::string analyzeFramePalette(const cv::Mat& frame);
 
 private:
     char displayAndGetKey(const std::string& windowName, const cv::Mat asset);

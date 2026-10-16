@@ -1,9 +1,12 @@
+// RuntimeState.h
 #pragma once
 
 #include <chrono>
 #include <optional>
 #include <iostream>
 #include <random>
+#include <vector>
+#include <string>
 #include "AssetManager.h"
 
 struct RuntimeState {
@@ -15,6 +18,11 @@ struct RuntimeState {
     // Auto Mode & ML State
     bool isAutoMode = false;         // 'M' attiva/disattiva
     SongDynamic currentSongDynamicTarget = BUILD; // 'J', 'K', 'L' impostano manualmente
+
+    // New State Variables
+    bool isBlackout = false;
+    EventPhase currentEventPhase = AMBIENT;
+    std::vector<std::string> activePalettes;
 
     // Timing
     std::chrono::microseconds animationStartTime;

@@ -1,13 +1,17 @@
+// RuntimeState.cpp
 #include "RuntimeState.h"
 #include <opencv2/core/utility.hpp> 
 #include <stdexcept>
+#include <algorithm>
 
 RuntimeState::RuntimeState(AssetManager& assetManager) 
     : isBounceActive(false),
       isAnimating(false),
       strobeFrameToggle(false),
       isAutoMode(false),           
-      currentSongDynamicTarget(BUILD),    
+      currentSongDynamicTarget(BUILD),
+      isBlackout(false),
+      currentEventPhase(AMBIENT),
       animationStartTime(0),
       lastFrameTime(0),
       nextStrobeTime(std::nullopt),
@@ -77,12 +81,30 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
     for (const auto& [key, bg] : assets.get_backgrounds()) {
         if (bg.get_source() == activeBackground.get_source()) continue;
         
-        if (bg.get_song_dynamic() == currentSongDynamicTarget) {
-            candidates.push_back(bg);
+        if (!bg.get_is_enabled_global()) continue;
+        
+        if (bg.get_event_phase() != currentEventPhase) continue;
+        
+        if (bg.get_song_dynamic() != currentSongDynamicTarget) continue;
+        
+        if (!activePalettes.empty()) {
+            bool paletteFound = false;
+            for (const auto& activePalette : activePalettes) {
+                if (bg.get_palette_color() == activePalette) {
+                    paletteFound = true;
+                    break;
+                }
+            }
+            if (!paletteFound) continue;
         }
+
+        candidates.push_back(bg);
     }
 
-    if (candidates.empty()) return;
+    if (candidates.empty()) {
+        std::cerr << "[WARNING] triggerAutoSwitch: Nessun background candidato trovato coi filtri attuali.\n";
+        return;
+    }
 
     static std::random_device rd;
     static std::mt19937 gen(rd());
