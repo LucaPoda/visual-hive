@@ -9,11 +9,19 @@
 
 namespace fs = std::filesystem;
 
-// Enum for Energy Levels
-enum EnergyLevel {
+// Enum for Event Phase
+enum EventPhase {
+    AMBIENT,
     LOW,
     MID,
-    HIGH,
+    HIGH
+};
+
+// Enum for Song Dynamic
+enum SongDynamic {
+    VERSE,
+    BUILD,
+    CHORUS,
     MANUAL
 };
 
@@ -41,7 +49,11 @@ class Background {
     cv::Mat currentVideoFrame;
 
     BackgroundType type;
-    EnergyLevel energyLevel = LOW; // Default to LOW
+    EventPhase eventPhase = AMBIENT;
+    SongDynamic songDynamic = VERSE;
+    std::string paletteColor = "";
+    bool isEnabledGlobal = true;
+
     bool forceNoForeground = false;
 
     cv::VideoCapture video_loop_cap;
@@ -95,8 +107,17 @@ class Background {
     const cv::Mat get_first_frame() const;
     const cv::Mat get_solid_color_frame(int width, int height, const cv::Scalar& color) const;
 
-    const EnergyLevel& get_energy_level() const { return energyLevel; }
-    void set_energy_level(const EnergyLevel& level) { this->energyLevel = level; }
+    const EventPhase& get_event_phase() const { return eventPhase; }
+    void set_event_phase(const EventPhase& phase) { this->eventPhase = phase; }
+
+    const SongDynamic& get_song_dynamic() const { return songDynamic; }
+    void set_song_dynamic(const SongDynamic& dynamic) { this->songDynamic = dynamic; }
+
+    const std::string& get_palette_color() const { return paletteColor; }
+    void set_palette_color(const std::string& color) { this->paletteColor = color; }
+
+    bool get_is_enabled_global() const { return isEnabledGlobal; }
+    void set_is_enabled_global(bool enabled) { this->isEnabledGlobal = enabled; }
 
     const bool& get_force_no_foreground() const { return forceNoForeground; }
     void set_force_no_foreground(bool value) { this->forceNoForeground = value; }
@@ -134,6 +155,11 @@ class Foreground {
     std::string key;
     bool forceOriginalColors = false;
 
+    std::string paletteColor = "";
+    bool isEnabledGlobal = true;
+    std::string customText = "";
+    int fontSize = 32;
+
     cv::Mat data;
 
     public:
@@ -154,6 +180,18 @@ class Foreground {
 
     const bool& get_force_original_colors() const { return forceOriginalColors; }
     void set_force_original_colors(bool value) { this->forceOriginalColors = value; }
+
+    const std::string& get_palette_color() const { return paletteColor; }
+    void set_palette_color(const std::string& color) { this->paletteColor = color; }
+
+    bool get_is_enabled_global() const { return isEnabledGlobal; }
+    void set_is_enabled_global(bool enabled) { this->isEnabledGlobal = enabled; }
+
+    const std::string& get_custom_text() const { return customText; }
+    void set_custom_text(const std::string& text) { this->customText = text; }
+
+    int get_font_size() const { return fontSize; }
+    void set_font_size(int size) { this->fontSize = size; }
 
     bool open();
     void close();
@@ -218,9 +256,9 @@ private:
     const AppConfig& appConfig;
     AssetsConfig assets;
     cv::Scalar activeForegroundColor;
-    std::string lastForegroundPath; // Changed from cv::Mat to std::string
+    std::string lastForegroundPath; 
     cv::Mat lastBlendedForeground;
-    std::map<char, cv::Mat> foregroundCache; // Cache for pre-processed foreground images
+    std::map<char, cv::Mat> foregroundCache; 
     
 public:
     AssetManager(const AppConfig& config);
@@ -241,7 +279,6 @@ private:
     void loadAssetsIntoMemory();
 };
 
-// Conversion function declarations for all classes
 void to_json(nlohmann::json& j, const Background& b);
 void from_json(const nlohmann::json& j, Background& b);
 void to_json(nlohmann::json& j, const Foreground& f);

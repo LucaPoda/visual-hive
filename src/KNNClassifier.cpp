@@ -7,7 +7,6 @@
 KNNClassifier::KNNClassifier(int k) : k_neighbors(k) {}
 
 std::vector<float> KNNClassifier::extractFeatures(const AudioMetrics& metrics) const {
-    // Vettore forte a 5 dimensioni (già in scala 0.0 - 1.0 dal DSP)
     return {
         metrics.rms,
         metrics.bandSubBass,
@@ -17,7 +16,7 @@ std::vector<float> KNNClassifier::extractFeatures(const AudioMetrics& metrics) c
     };
 }
 
-void KNNClassifier::addSample(const AudioMetrics& metrics, EnergyLevel label) {
+void KNNClassifier::addSample(const AudioMetrics& metrics, SongDynamic label) {
     temp_dataset.push_back({extractFeatures(metrics), label});
 }
 
@@ -40,10 +39,10 @@ float KNNClassifier::calculateDistance(const std::vector<float>& a, const std::v
 }
 
 KNNPrediction KNNClassifier::predict(const AudioMetrics& metrics) {
-    if (dataset.empty()) return {MID, 0.0f, 1.0f, 0.0f};
+    if (dataset.empty()) return {BUILD, 0.0f, 1.0f, 0.0f};
 
     std::vector<float> currentFeatures = extractFeatures(metrics);
-    std::vector<std::pair<float, EnergyLevel>> distances;
+    std::vector<std::pair<float, SongDynamic>> distances;
 
     for (const auto& sample : dataset) {
         distances.push_back({calculateDistance(currentFeatures, sample.features), sample.label});
@@ -53,29 +52,29 @@ KNNPrediction KNNClassifier::predict(const AudioMetrics& metrics) {
         return a.first < b.first;
     });
 
-    int countLow = 0, countMid = 0, countHigh = 0;
+    int countVerse = 0, countBuild = 0, countChorus = 0;
     int k = std::min(k_neighbors, (int)distances.size());
 
     for (int i = 0; i < k; ++i) {
-        if (distances[i].second == LOW) countLow++;
-        else if (distances[i].second == MID) countMid++;
-        else if (distances[i].second == HIGH) countHigh++;
+        if (distances[i].second == VERSE) countVerse++;
+        else if (distances[i].second == BUILD) countBuild++;
+        else if (distances[i].second == CHORUS) countChorus++;
     }
 
     KNNPrediction result;
-    result.confLow = (float)countLow / k;
-    result.confMid = (float)countMid / k;
-    result.confHigh = (float)countHigh / k;
+    result.confVerse = (float)countVerse / k;
+    result.confBuild = (float)countBuild / k;
+    result.confChorus = (float)countChorus / k;
 
-    if (countHigh >= countMid && countHigh >= countLow) result.winner = HIGH;
-    else if (countLow >= countMid && countLow >= countHigh) result.winner = LOW;
-    else result.winner = MID;
+    if (countChorus >= countBuild && countChorus >= countVerse) result.winner = CHORUS;
+    else if (countVerse >= countBuild && countVerse >= countChorus) result.winner = VERSE;
+    else result.winner = BUILD;
 
     return result;
 }
 
-std::map<EnergyLevel, int> KNNClassifier::getClassCounts() const {
-    std::map<EnergyLevel, int> counts = {{LOW, 0}, {MID, 0}, {HIGH, 0}};
+std::map<SongDynamic, int> KNNClassifier::getClassCounts() const {
+    std::map<SongDynamic, int> counts = {{VERSE, 0}, {BUILD, 0}, {CHORUS, 0}};
     for (const auto& sample : temp_dataset) counts[sample.label]++;
     for (const auto& sample : dataset) counts[sample.label]++;
     return counts;
@@ -102,12 +101,11 @@ bool KNNClassifier::loadDataset(const std::string& filename) {
         KNNSample sample;
         while (std::getline(ss, val, ',')) {
             if (ss.peek() == EOF || ss.peek() == '\n' || ss.peek() == '\r') {
-                sample.label = static_cast<EnergyLevel>(std::stoi(val));
+                sample.label = static_cast<SongDynamic>(std::stoi(val));
             } else {
                 sample.features.push_back(std::stof(val));
             }
         }
-        // Assicurati di caricare solo vettori con 5 feature
         if (sample.features.size() == 5) {
              dataset.push_back(sample);
         }

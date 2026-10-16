@@ -7,7 +7,7 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
       isAnimating(false),
       strobeFrameToggle(false),
       isAutoMode(false),           
-      currentEnergyTarget(MID),    
+      currentSongDynamicTarget(BUILD),    
       animationStartTime(0),
       lastFrameTime(0),
       nextStrobeTime(std::nullopt),
@@ -77,7 +77,7 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
     for (const auto& [key, bg] : assets.get_backgrounds()) {
         if (bg.get_source() == activeBackground.get_source()) continue;
         
-        if (bg.get_energy_level() == currentEnergyTarget) {
+        if (bg.get_song_dynamic() == currentSongDynamicTarget) {
             candidates.push_back(bg);
         }
     }

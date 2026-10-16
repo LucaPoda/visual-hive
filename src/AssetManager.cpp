@@ -18,31 +18,41 @@ cv::Scalar toScalar(const std::string& hexColor);
 fs::path Background::backgroundsPath;
 fs::path Foreground::foregroundsPath;
 
-NLOHMANN_JSON_SERIALIZE_ENUM(EnergyLevel, {
+NLOHMANN_JSON_SERIALIZE_ENUM(EventPhase, {
+    {AMBIENT, "ambient"},
     {LOW, "low"},
     {MID, "mid"},
-    {HIGH, "high"},
+    {HIGH, "high"}
+})
+
+NLOHMANN_JSON_SERIALIZE_ENUM(SongDynamic, {
+    {VERSE, "verse"},
+    {BUILD, "build"},
+    {CHORUS, "chorus"},
     {MANUAL, "manual"}
 })
 
-// Update Background from_json to grab app/window names if they exist
 void from_json(const nlohmann::json& j, Background& b) {
     j.at("foreground_color").get_to(b.foregroundColor);
     j.at("key").get_to(b.key);
-    b.energyLevel = j.value("energy_level", LOW); 
+    b.eventPhase = j.value("event_phase", AMBIENT); 
+    b.songDynamic = j.value("song_dynamic", VERSE);
+    b.paletteColor = j.value("palette_color", "");
+    b.isEnabledGlobal = j.value("is_enabled_global", true);
     b.forceNoForeground = j.value("force_no_foreground", false);
     
-    // Read window capture specific fields if they exist
     if (j.contains("app_name")) b.set_target_app_name(j.at("app_name").get<std::string>());
     if (j.contains("window_name")) b.set_target_window_name(j.at("window_name").get<std::string>());
 }
 
-// Update Background to_json to include app/window names
 void to_json(nlohmann::json& j, const Background& b) {
     j = nlohmann::json{
         {"foreground_color", b.foregroundColor}, 
         {"key", b.key},
-        {"energy_level", b.energyLevel},
+        {"event_phase", b.eventPhase},
+        {"song_dynamic", b.songDynamic},
+        {"palette_color", b.paletteColor},
+        {"is_enabled_global", b.isEnabledGlobal},
         {"force_no_foreground", b.forceNoForeground}
     };
     
@@ -52,12 +62,15 @@ void to_json(nlohmann::json& j, const Background& b) {
     }
 }
 
-// Foreground conversion
 void to_json(nlohmann::json& j, const Foreground& f) {
     j = nlohmann::json{
         {"scale", f.scale},
         {"key", f.key},
-        {"force_original_colors", f.forceOriginalColors}
+        {"force_original_colors", f.forceOriginalColors},
+        {"palette_color", f.paletteColor},
+        {"is_enabled_global", f.isEnabledGlobal},
+        {"custom_text", f.customText},
+        {"font_size", f.fontSize}
     };
 }
 
@@ -65,9 +78,12 @@ void from_json(const nlohmann::json& j, Foreground& f) {
     j.at("scale").get_to(f.scale);
     j.at("key").get_to(f.key);
     j.at("force_original_colors").get_to(f.forceOriginalColors);
+    f.paletteColor = j.value("palette_color", "");
+    f.isEnabledGlobal = j.value("is_enabled_global", true);
+    f.customText = j.value("custom_text", "");
+    f.fontSize = j.value("font_size", 32);
 }
 
-// Default conversion
 void to_json(nlohmann::json& j, const Default& d) {
     j = nlohmann::json{{"background", d.background}, {"foreground", d.foreground}};
 }
@@ -77,18 +93,15 @@ void from_json(const nlohmann::json& j, Default& d) {
     j.at("foreground").get_to(d.foreground);
 }
 
-// Update AssetsConfig from_json to merge both into the backgrounds map
 void from_json(const nlohmann::json& j, AssetsConfig& ac) {
-    // 1. Load standard backgrounds
     if (j.contains("backgrounds")) {
         j.at("backgrounds").get_to(ac.get_mutable_backgrounds());
     }
     
-    // 2. Load window captures and merge them into the backgrounds map
     if (j.contains("window_captures")) {
         for (auto& [key, value] : j["window_captures"].items()) {
             Background bg = value.get<Background>();
-            bg.set_source(WINDOW_CAPTURE, key); // Mark it as a window capture
+            bg.set_source(WINDOW_CAPTURE, key); 
             ac.get_mutable_backgrounds()[key] = bg;
         }
     }
@@ -97,7 +110,6 @@ void from_json(const nlohmann::json& j, AssetsConfig& ac) {
     j.at("foregrounds").get_to(ac.get_mutable_foregrounds());
 }
 
-// Update AssetsConfig to_json to split them back apart for saving
 void to_json(nlohmann::json& j, const AssetsConfig& ac) {
     nlohmann::json standardBackgrounds;
     nlohmann::json windowCaptures;
@@ -157,7 +169,7 @@ const cv::Mat Background::get_first_frame() const {
         }
     }
     else {
-        return this->get_solid_color_frame(1920, 1080, this->get_background_color().value()); // todo: define default width and height or assign width and height to the background itself
+        return this->get_solid_color_frame(1920, 1080, this->get_background_color().value()); 
     }
 }
 
@@ -165,7 +177,6 @@ bool Background::open() {
     if (this->type == VIDEO_LOOP) {
         this->video_loop_cap.open(this->get_background_path().value());
         
-        // RESET timer e cache quando il video viene aperto
         this->lastVideoFrameTime = 0; 
         this->currentVideoFrame.release();
         
@@ -191,7 +202,6 @@ void Background::close() {
         this->video_loop_cap.release();
     }
     else if (this->type == WINDOW_CAPTURE) {
-        // NEW: Stop the background stream when this asset is closed
         stopWindowCapture();
     }
 }
@@ -200,11 +210,9 @@ cv::Mat Background::get_next_frame() {
     if (this->type == VIDEO_LOOP) {
         long long currentTick = cv::getTickCount();
         
-        // Se è il primissimo frame o la cache è vuota, estraiamo forzatamente un frame
         if (lastVideoFrameTime == 0 || currentVideoFrame.empty()) {
             this->video_loop_cap >> currentVideoFrame;
             
-            // Sicurezza: se il video è vuoto o finito subito, loop
             if (currentVideoFrame.empty()) {
                 this->video_loop_cap.set(cv::CAP_PROP_POS_FRAMES, 0);
                 this->video_loop_cap >> currentVideoFrame;
@@ -214,20 +222,16 @@ cv::Mat Background::get_next_frame() {
             return currentVideoFrame.clone();
         }
 
-        // Calcola i millisecondi trascorsi dall'ultimo frame prelevato
         double elapsedTime_ms = (currentTick - lastVideoFrameTime) * 1000.0 / cv::getTickFrequency();
         
-        // Ottieni gli FPS originali del video (se fallisce, fallback a 30 FPS)
         double target_fps = this->get_fps();
         if (target_fps <= 0) target_fps = 30.0;
         
         double frameDuration_ms = 1000.0 / target_fps;
 
-        // Estrai un nuovo frame SOLO se è passato il tempo necessario per questo specifico video
         if (elapsedTime_ms >= frameDuration_ms) {
             this->video_loop_cap >> currentVideoFrame;
 
-            // Se la lettura fallisce (fine del video), riavvolgi (Loop)
             if (currentVideoFrame.empty()) {
                 this->video_loop_cap.set(cv::CAP_PROP_POS_FRAMES, 0);
                 this->video_loop_cap >> currentVideoFrame;
@@ -236,18 +240,15 @@ cv::Mat Background::get_next_frame() {
                     exit(1);
                 }
             }
-            // Aggiorna il timer all'istante di estrazione di questo nuovo frame
             lastVideoFrameTime = currentTick;
         }
 
-        // Restituisci la cache (clone per sicurezza in modo che filtri e blending non sporchino la cache)
         return currentVideoFrame.clone();
     }
     else if (this->type == WINDOW_CAPTURE) {
         cv::Mat frame = getLatestWindowFrame();
 
         if (frame.empty()) {
-            // Fallback: se la cattura finestra fallisce, nero solido
             return this->get_solid_color_frame(1920, 1080, cv::Scalar(0,0,0));
         }
         
@@ -273,7 +274,7 @@ double Background::get_fps() {
         return this->video_loop_cap.get(cv::CAP_PROP_FPS);
     }
     else {
-        return 30.0; // default to 30 FPS --- todo: this should a config param
+        return 30.0; 
     }
 }
 
@@ -288,14 +289,12 @@ const cv::Mat Foreground::get_first_frame() const {
 bool Foreground::open() {
     this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
     
-    // Check if data is empty (load failed)
     if (this->data.empty()) {
         return false;
     }
     return true;
 }
 void Foreground::close() {
-    // todo: understand how to close an image
 }
 
 cv::Mat Foreground::get_next_frame() {
@@ -305,7 +304,6 @@ cv::Mat Foreground::get_next_frame() {
     return this->data;
 }   
 
-// Constructor now takes the AppConfig object
 AssetManager::AssetManager(const AppConfig& config) : appConfig(config) {
    std::ifstream jsonFile(config.assetsConfigFile);
 
@@ -323,7 +321,6 @@ AssetManager::AssetManager(const AppConfig& config) : appConfig(config) {
     }
 }
 
-// Main initialization function
 void AssetManager::initializeAssets() {
     loadAssetsIntoMemory();
 }
@@ -334,17 +331,14 @@ cv::Scalar toScalar(const std::string& hexColor) {
     }
     
     try {
-        // Extract R, G, and B substrings
         std::string red_hex = hexColor.substr(1, 2);
         std::string green_hex = hexColor.substr(3, 2);
         std::string blue_hex = hexColor.substr(5, 2);
 
-        // Convert hex strings to integer values
         int r = std::stoi(red_hex, nullptr, 16);
         int g = std::stoi(green_hex, nullptr, 16);
         int b = std::stoi(blue_hex, nullptr, 16);
         
-        // OpenCV uses BGR format, so we return the values in the correct order
         return cv::Scalar(b, g, r);
 
     } catch (const std::exception& e) {
@@ -363,7 +357,7 @@ void AssetManager::loadAssetsIntoMemory() {
 
         if (value.get_type() == WINDOW_CAPTURE) {
             if (!fetchedWindows) {
-                openWindows = getOpenWindows(); // Using the C++ wrapper we defined earlier
+                openWindows = getOpenWindows(); 
                 fetchedWindows = true;
             }
 
@@ -372,8 +366,6 @@ void AssetManager::loadAssetsIntoMemory() {
             std::string targetWindow = value.get_target_window_name();
 
             for (const auto& win : openWindows) {
-                // Match the app name. If a window_name is provided in JSON, match that too. 
-                // If window_name is empty, just grab the first valid window of the app!
                 std::cout << "[DEBUG] OS sees App: '" << win.ownerName << "' with Window: '" << win.name << "'\n";
                 if (win.ownerName == targetApp) {
                     value.set_capture_window_id(win.id);
@@ -390,8 +382,6 @@ void AssetManager::loadAssetsIntoMemory() {
                         << "Ensure the window is open before switching to it. Opened window with similar names:\n";
 
                 for (const auto& win : openWindows) {
-                    // Match the app name. If a window_name is provided in JSON, match that too. 
-                    // If window_name is empty, just grab the first valid window of the app!
                     if (win.ownerName.find(targetApp) != std::string::npos)
                         std::cout << "- '" << win.ownerName << "' with Window: '" << win.name << "'\n";
                 }
@@ -447,25 +437,21 @@ void AssetManager::loadAssetsIntoMemory() {
 
 }
 
-// Public method to blend foreground with alpha channel onto a background
 cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor, bool forceOriginalColor) {
     if (background.empty() || foregroundAsset.empty()) return background.clone();
 
     cv::Mat result = background.clone();
 
-    // 1. Calcola nuove dimensioni
     int newWidth = static_cast<int>(screenWidth * (foregroundScalePercent / 100.0));
     int newHeight = static_cast<int>(foregroundAsset.rows * ((double)newWidth / foregroundAsset.cols));
     if (newWidth <= 0 || newHeight <= 0) return result;
 
-    // 2. Resize e garanzia canale Alpha
     cv::Mat resizedFg;
     cv::resize(foregroundAsset, resizedFg, cv::Size(newWidth, newHeight), 0, 0, cv::INTER_AREA);
     if (resizedFg.channels() != 4) {
         cv::cvtColor(resizedFg, resizedFg, cv::COLOR_BGR2BGRA);
     }
 
-    // 3. Calcolo ROI (Region of Interest) sicura
     int xOffset = (screenWidth - newWidth) / 2;
     int yOffset = (screenHeight - newHeight) / 2;
     int xStart = std::max(0, xOffset);
@@ -483,13 +469,11 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
     cv::Mat bgRegion = result(cv::Rect(xStart, yStart, roiWidth, roiHeight));
     cv::Mat fgRegion = resizedFg(cv::Rect(fgXStart, fgYStart, roiWidth, roiHeight));
 
-    // 4. Blending ultra-veloce con diramazione fuori dal ciclo
     int targetB = foregroundColor[0];
     int targetG = foregroundColor[1];
     int targetR = foregroundColor[2];
 
     if (forceOriginalColor) {
-        // PERCORSO A: Mantiene i colori originali del PNG (Lettura diretta, niente sostituzioni)
         for (int y = 0; y < roiHeight; ++y) {
             uchar* bgPtr = bgRegion.ptr<uchar>(y);
             const uchar* fgPtr = fgRegion.ptr<uchar>(y);
@@ -514,7 +498,6 @@ cv::Mat AssetManager::blend(const cv::Mat& background, const cv::Mat& foreground
             }
         }
     } else {
-        // PERCORSO B: Applica la colorazione solida
         for (int y = 0; y < roiHeight; ++y) {
             uchar* bgPtr = bgRegion.ptr<uchar>(y);
             const uchar* fgPtr = fgRegion.ptr<uchar>(y);
@@ -582,9 +565,7 @@ std::optional<Foreground> AssetManager::getForegroundByPressedKey(char pressed_k
     return std::nullopt;
 }
 
-// Helper to display a visual and get a key press
 char AssetManager::displayAndGetKey(const std::string& windowName, const cv::Mat asset) {
     cv::imshow(windowName, asset);
     return cv::waitKey(0);
 }
-

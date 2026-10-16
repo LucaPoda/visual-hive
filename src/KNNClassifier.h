@@ -2,26 +2,26 @@
 #include <vector>
 #include <string>
 #include <map>
-#include "AssetManager.h" // Per l'enum EnergyLevel
+#include "AssetManager.h" // Per l'enum SongDynamic
 #include "AudioAnalyzer.h" // Per AudioMetrics
 
 struct KNNSample {
     std::vector<float> features;
-    EnergyLevel label;
+    SongDynamic label;
 };
 
 struct KNNPrediction {
-    EnergyLevel winner;
-    float confLow;
-    float confMid;
-    float confHigh;
+    SongDynamic winner;
+    float confVerse;
+    float confBuild;
+    float confChorus;
 };
 
 class KNNClassifier {
 public:
     KNNClassifier(int k = 5);
     
-    void addSample(const AudioMetrics& metrics, EnergyLevel label);
+    void addSample(const AudioMetrics& metrics, SongDynamic label);
     KNNPrediction predict(const AudioMetrics& metrics);
     
     bool saveDataset(const std::string& filename) const;
@@ -31,7 +31,7 @@ public:
     void commitTemporaryDataset();
     
     size_t getDatasetSize() const;
-    std::map<EnergyLevel, int> getClassCounts() const;
+    std::map<SongDynamic, int> getClassCounts() const;
 
 private:
     int k_neighbors;

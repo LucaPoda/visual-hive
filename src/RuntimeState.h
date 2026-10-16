@@ -14,7 +14,7 @@ struct RuntimeState {
 
     // Auto Mode & ML State
     bool isAutoMode = false;         // 'M' attiva/disattiva
-    EnergyLevel currentEnergyTarget = MID; // 'J', 'K', 'L' impostano manualmente
+    SongDynamic currentSongDynamicTarget = BUILD; // 'J', 'K', 'L' impostano manualmente
 
     // Timing
     std::chrono::microseconds animationStartTime;

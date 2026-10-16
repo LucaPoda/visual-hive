@@ -189,9 +189,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Text("Intensità Attuale: ");
     ImGui::SameLine();
-    if (state.currentEnergyTarget == LOW) ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "LOW");
-    else if (state.currentEnergyTarget == MID) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "MID");
-    else ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "HIGH");
+    if (state.currentSongDynamicTarget == VERSE) ImGui::TextColored(ImVec4(0.2f, 0.6f, 1.0f, 1.0f), "VERSE");
+    else if (state.currentSongDynamicTarget == BUILD) ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "BUILD");
+    else ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "CHORUS");
     
     ImGui::Text("Background: [ %s ]", state.activeBackground.get_key().c_str());
     if (!state.activeBackground.get_force_no_foreground()) {
@@ -410,9 +410,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
     
-    std::string predWinStr = (pred.winner == LOW) ? "LOW" : (pred.winner == MID) ? "MID" : (pred.winner == HIGH) ? "HIGH" : "MANUAL";
-    ImVec4 winColor = (pred.winner == LOW) ? ImVec4(0.2f, 0.6f, 1.0f, 1.0f) :
-                     (pred.winner == MID) ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
+    std::string predWinStr = (pred.winner == VERSE) ? "VERSE" : (pred.winner == BUILD) ? "BUILD" : (pred.winner == CHORUS) ? "CHORUS" : "MANUAL";
+    ImVec4 winColor = (pred.winner == VERSE) ? ImVec4(0.2f, 0.6f, 1.0f, 1.0f) :
+                     (pred.winner == BUILD) ? ImVec4(1.0f, 0.8f, 0.0f, 1.0f) : ImVec4(1.0f, 0.2f, 0.2f, 1.0f);
     if (pred.winner == MANUAL) winColor = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
                      
     ImGui::Text("CLASSE VINCENTE KNN:");
@@ -421,19 +421,19 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::TextColored(winColor, "[ %s ]", predWinStr.c_str());
     ImGui::SetWindowFontScale(1.0f);
     
-    char bufLow[32], bufMid[32], bufHigh[32];
-    snprintf(bufLow, sizeof(bufLow), "LOW (%.0f%%)", pred.confLow * 100.0f);
-    snprintf(bufMid, sizeof(bufMid), "MID (%.0f%%)", pred.confMid * 100.0f);
-    snprintf(bufHigh, sizeof(bufHigh), "HIGH (%.0f%%)", pred.confHigh * 100.0f);
+    char bufVerse[32], bufBuild[32], bufChorus[32];
+    snprintf(bufVerse, sizeof(bufVerse), "VERSE (%.0f%%)", pred.confVerse * 100.0f);
+    snprintf(bufBuild, sizeof(bufBuild), "BUILD (%.0f%%)", pred.confBuild * 100.0f);
+    snprintf(bufChorus, sizeof(bufChorus), "CHORUS (%.0f%%)", pred.confChorus * 100.0f);
     
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.2f, 0.6f, 1.0f, 1.0f));
-    ImGui::ProgressBar(pred.confLow, ImVec2(-1.0f, 12.0f), bufLow);
+    ImGui::ProgressBar(pred.confVerse, ImVec2(-1.0f, 12.0f), bufVerse);
     ImGui::PopStyleColor();
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(1.0f, 0.8f, 0.0f, 1.0f));
-    ImGui::ProgressBar(pred.confMid, ImVec2(-1.0f, 12.0f), bufMid);
+    ImGui::ProgressBar(pred.confBuild, ImVec2(-1.0f, 12.0f), bufBuild);
     ImGui::PopStyleColor();
     ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(1.0f, 0.2f, 0.2f, 1.0f));
-    ImGui::ProgressBar(pred.confHigh, ImVec2(-1.0f, 12.0f), bufHigh);
+    ImGui::ProgressBar(pred.confChorus, ImVec2(-1.0f, 12.0f), bufChorus);
     ImGui::PopStyleColor();
     
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
@@ -462,19 +462,19 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Columns(1);
 
     if (ImGui::BeginPopupModal("Training Dataset KNN", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
-        std::map<EnergyLevel, int> counts = knnClassifier.getClassCounts();
-        int totalSamples = counts[LOW] + counts[MID] + counts[HIGH];
+        std::map<SongDynamic, int> counts = knnClassifier.getClassCounts();
+        int totalSamples = counts[VERSE] + counts[BUILD] + counts[CHORUS];
         float estimatedKB = (totalSamples * 64.0f) / 1024.0f;
         ImGui::Text("Statistiche Dataset Temporaneo:");
-        ImGui::BulletText("LOW:  %d samples", counts[LOW]);
-        ImGui::BulletText("MID:  %d samples", counts[MID]);
-        ImGui::BulletText("HIGH: %d samples", counts[HIGH]);
+        ImGui::BulletText("VERSE:  %d samples", counts[VERSE]);
+        ImGui::BulletText("BUILD:  %d samples", counts[BUILD]);
+        ImGui::BulletText("CHORUS: %d samples", counts[CHORUS]);
         ImGui::TextDisabled("Totale: %d samples (Dimensione stimata: %.2f KB)", totalSamples, estimatedKB);
         ImGui::Separator();
         ImGui::Text("Clicca o tieni premuto per catturare (~4 sample/sec):");
         static float captureTimer = 0.0f;
         captureTimer += ImGui::GetIO().DeltaTime;
-        auto handleCaptureButton = [&](const char* btnLabel, EnergyLevel level, const ImVec4& btnCol) {
+        auto handleCaptureButton = [&](const char* btnLabel, SongDynamic level, const ImVec4& btnCol) {
             ImGui::PushStyleColor(ImGuiCol_Button, btnCol);
             bool clicked = ImGui::Button(btnLabel, ImVec2(125, 45));
             bool held = ImGui::IsItemActive(); 
@@ -484,11 +484,11 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 captureTimer = 0.0f;
             }
         };
-        handleCaptureButton("Registra LOW",  LOW,  ImVec4(0.15f, 0.45f, 0.80f, 1.0f));
+        handleCaptureButton("Registra VERSE",  VERSE,  ImVec4(0.15f, 0.45f, 0.80f, 1.0f));
         ImGui::SameLine();
-        handleCaptureButton("Registra MID",  MID,  ImVec4(0.75f, 0.60f, 0.05f, 1.0f));
+        handleCaptureButton("Registra BUILD",  BUILD,  ImVec4(0.75f, 0.60f, 0.05f, 1.0f));
         ImGui::SameLine();
-        handleCaptureButton("Registra HIGH", HIGH, ImVec4(0.80f, 0.20f, 0.20f, 1.0f));
+        handleCaptureButton("Registra CHORUS", CHORUS, ImVec4(0.80f, 0.20f, 0.20f, 1.0f));
         ImGui::Separator();
         if (ImGui::Button("Salva Dataset", ImVec2(190, 30))) {
             knnClassifier.commitTemporaryDataset();
