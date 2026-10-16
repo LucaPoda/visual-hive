@@ -1,3 +1,4 @@
+// AudioAnalyzer.cpp
 #include "AudioAnalyzer.h"
 #include <cmath>
 #include <numeric>
@@ -75,11 +76,14 @@ std::vector<AudioDeviceInfo> AudioAnalyzer::getInputDevices() {
     return devices;
 }
 
-bool AudioAnalyzer::start(unsigned int deviceId) {
+bool AudioAnalyzer::start(unsigned int deviceId, unsigned int configSampleRate, unsigned int configBufferFrames) {
     if (adc.getDeviceCount() < 1) {
         std::cerr << "[AUDIO] Nessun dispositivo audio trovato." << std::endl;
         return false;
     }
+
+    this->sampleRate = configSampleRate;
+    unsigned int bufferFrames = configBufferFrames;
 
     unsigned int selectedId = (deviceId == 0) ? adc.getDefaultInputDevice() : deviceId;
     RtAudio::DeviceInfo info = adc.getDeviceInfo(selectedId);
@@ -105,8 +109,6 @@ bool AudioAnalyzer::start(unsigned int deviceId) {
     parameters.deviceId = currentDeviceId;
     parameters.nChannels = 2; // Forzato a 2 canali
     parameters.firstChannel = 0;
-
-    unsigned int bufferFrames = 512;
     
     try {
         if (adc.isStreamRunning()) adc.stopStream();

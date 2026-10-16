@@ -1,3 +1,4 @@
+// main.cpp
 #include <iostream>
 #include <vector>
 #include <string>
@@ -34,6 +35,9 @@ KNNClassifier knnClassifier(21);
 int main() {
     ConfigManager configManager("config/config.json");
     const AppConfig& config = configManager.getConfig();
+    
+    knnClassifier.setK(config.knnKNeighbors);
+    
     DisplayInfo targetDisplay = selectTargetDisplay();
     
     AssetManager assetManager(config);
@@ -42,7 +46,7 @@ int main() {
     knnClassifier.loadDataset("knn_dataset.csv");
 
     AudioAnalyzer audioAnalyzer;
-    audioAnalyzer.start();
+    audioAnalyzer.start(0, config.audioSampleRate, config.audioBufferFrames);
 
     std::cout << "[INFO] Waiting for audio warmup (2 seconds)...\n";
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -50,7 +54,7 @@ int main() {
     int beatsSinceLastChange = 0;
     
     std::deque<SongDynamic> labelHistory;
-    const size_t HISTORY_SIZE = 30; 
+    const size_t HISTORY_SIZE = config.knnHistorySize; 
 
     SongDynamic stablePrediction = BUILD; 
     SongDynamic candidatePrediction = BUILD;
@@ -58,9 +62,9 @@ int main() {
     int stableFramesCount = 0; 
     
     std::map<SongDynamic, int> baseDebounce = {
-        {VERSE, 25},  
-        {BUILD, 15},  
-        {CHORUS, 6}   
+        {VERSE, config.debounceVerse},  
+        {BUILD, config.debounceBuild},  
+        {CHORUS, config.debounceChorus}   
     };
 
     const int REQUIRED_CONSECUTIVE_FRAMES = 5; 

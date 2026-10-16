@@ -1,3 +1,4 @@
+// GraphicsManager.cpp
 #include "GraphicsManager.h"
 #include <cmath>
 #include <iostream>
@@ -13,7 +14,7 @@ namespace fs = std::filesystem;
 extern KNNClassifier knnClassifier;
 
 GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& display) 
-: windowName(config.windowName), displayWidth(display.width), displayHeight(display.height) 
+: windowName(config.windowName), displayWidth(display.width), displayHeight(display.height), strobeDurationMs(config.strobeDurationMs)
 {
     if (!glfwInit()) {
         std::cerr << "[ERROR] Impossibile inizializzare GLFW!" << std::endl;
@@ -27,7 +28,7 @@ GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& dis
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE); 
     #endif
     
-    uiWindow = glfwCreateWindow(1280, 720, "Visual-Hive - Regia / Dashboard", NULL, NULL);
+    uiWindow = glfwCreateWindow(config.uiWindowWidth, config.uiWindowHeight, "Visual-Hive - Regia / Dashboard", NULL, NULL);
     if (!uiWindow) {
         glfwTerminate();
         std::cerr << "[ERROR] Impossibile creare la finestra di regia GLFW!" << std::endl;
@@ -206,7 +207,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     bool strobeActive = ImGui::IsKeyDown(ImGuiKey_Space);
     ImGui::Text("Strobo (Spazio): ");
     ImGui::SameLine();
-    if (strobeActive) ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "ON (50ms)");
+    if (strobeActive) ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "ON (%dms)", strobeDurationMs);
     else ImGui::TextDisabled("OFF");
     
     ImGui::Spacing();
@@ -245,20 +246,15 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::SameLine();
     if (ImGui::Button("Refresh", ImVec2(55.0f, 0.0f))) audioDevices = audioAnalyzer.getInputDevices();
     
-    // 5. Meter Principale Audio in Ingresso (Stereo dBFS con Peak Hold)
-    
-    // Variabili statiche per mantenere la "memoria" del picco
     static float peakHoldL = 0.0f;
     static float peakHoldR = 0.0f;
 
-    // Aggiornamento Peak Hold: Sale subito, scende lentamente (0.97f a ~30-60fps)
     if (audioData.peakL > peakHoldL) peakHoldL = audioData.peakL;
     else peakHoldL *= 0.999f;
 
     if (audioData.peakR > peakHoldR) peakHoldR = audioData.peakR;
     else peakHoldR *= 0.999f;
 
-    // Usiamo il valore massimo del Peak Hold (tra L e R) per scriverlo in dB in alto
     float maxHold = std::max(peakHoldL, peakHoldR);
     float maxHoldDb = (maxHold > 0.0001f) ? 20.0f * std::log10(maxHold) : -60.0f;
     
@@ -269,7 +265,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Main In (dBFS):");
     ImGui::SameLine();
     
-    // Colore del testo basato sul picco trattenuto
     ImVec4 avgColor;
     if (maxHoldDb >= -0.1f) avgColor = ImVec4(1.0f, 0.1f, 0.1f, 1.0f); 
     else if (maxHoldDb > -6.0f) avgColor = ImVec4(1.0f, 0.8f, 0.1f, 1.0f);
@@ -277,18 +272,15 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::TextColored(avgColor, "[ %s ]", avgBuf);
 
-    // Lambda per disegnare i fader L/R con tacca
     auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
         float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
         float holdDb = (linearHold > 0.0001f) ? 20.0f * std::log10(linearHold) : -60.0f;
         
-        // Range visivo da -48 dB a 0 dB
         float minDb = -48.0f; 
         float maxDb = 0.0f;
         float fraction = std::clamp((db - minDb) / (maxDb - minDb), 0.0f, 1.0f);
         float holdFraction = std::clamp((holdDb - minDb) / (maxDb - minDb), 0.0f, 1.0f);
 
-        // Colore della barra principale istantanea
         ImVec4 color;
         if (db >= -0.1f) color = ImVec4(1.0f, 0.1f, 0.1f, 1.0f); 
         else if (db > -6.0f) color = ImVec4(1.0f, 0.8f, 0.1f, 1.0f);
@@ -297,24 +289,15 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         ImGui::Text("%s", label);
         ImGui::SameLine(25.0f);
         
-        // 1. Disegna la progress bar
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
         ImGui::ProgressBar(fraction, ImVec2(-1.0f, 8.0f), ""); 
         ImGui::PopStyleColor();
 
-        // 2. Disegna la "tacca" bianca del Peak Hold sopra la barra
         if (holdFraction > 0.0f) {
-            // Prende le coordinate rettangolari dell'ultimo elemento disegnato (la ProgressBar)
             ImVec2 p_min = ImGui::GetItemRectMin();
             ImVec2 p_max = ImGui::GetItemRectMax();
-            
-            // Calcola la X esatta dove piazzare la tacca
             float tick_x = p_min.x + (p_max.x - p_min.x) * holdFraction;
-            
-            // Evita che la tacca sbrodoli fuori dal rettangolo a destra
             if (tick_x > p_max.x - 1.0f) tick_x = p_max.x - 1.0f;
-            
-            // Renderizza un segmento verticale spesso 2px
             ImGui::GetWindowDrawList()->AddLine(
                 ImVec2(tick_x, p_min.y), 
                 ImVec2(tick_x, p_max.y), 
@@ -324,7 +307,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
     };
 
-    // Passiamo alla lambda sia il valore istantaneo che quello del "Peak Hold"
     drawDbMeter("L", audioData.peakL, peakHoldL);
     drawDbMeter("R", audioData.peakR, peakHoldR);
     
@@ -363,9 +345,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::EndChild();
     ImGui::NextColumn();
 
-    // ------------------------------------------
-    // COLONNA DESTRA: Auto Mode & ML
-    // ------------------------------------------
     ImGui::BeginChild("AutoModeML", ImVec2(0, 0), true);
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
     ImGui::Separator();
@@ -636,7 +615,7 @@ cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& 
     }
     if (now >= state.nextStrobeTime.value()) {
         state.strobeFrameToggle = !state.strobeFrameToggle;
-        state.nextStrobeTime = now + std::chrono::milliseconds(50);
+        state.nextStrobeTime = now + std::chrono::milliseconds(strobeDurationMs);
     }
     if (state.strobeFrameToggle) {
         return cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(255, 255, 255));

@@ -1,3 +1,4 @@
+// KNNClassifier.h
 #pragma once
 #include <vector>
 #include <string>
@@ -32,6 +33,9 @@ public:
     
     size_t getDatasetSize() const;
     std::map<SongDynamic, int> getClassCounts() const;
+    
+    void setK(int k);
+    int getK() const { return k_neighbors; }
 
 private:
     int k_neighbors;

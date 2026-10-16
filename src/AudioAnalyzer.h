@@ -1,3 +1,4 @@
+// AudioAnalyzer.h
 #pragma once
 
 #include <RtAudio.h>
@@ -46,7 +47,7 @@ public:
     AudioAnalyzer();
     ~AudioAnalyzer();
 
-    bool start(unsigned int deviceId = 0);
+    bool start(unsigned int deviceId = 0, unsigned int configSampleRate = 44100, unsigned int configBufferFrames = 512);
     void stop();
     AudioMetrics getMetrics();
 

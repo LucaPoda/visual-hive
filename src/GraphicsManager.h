@@ -1,3 +1,4 @@
+// GraphicsManager.h
 #pragma once
 
 #include <opencv2/opencv.hpp>
@@ -25,6 +26,7 @@ private:
     std::string windowName;
     int displayWidth;
     int displayHeight;
+    int strobeDurationMs;
 
     GLFWwindow* uiWindow;
     GLFWwindow* projectorWindow; 
@@ -52,7 +54,6 @@ public:
     
     void beginDashboard();
     
-    // Firma aggiornata per ricevere le predizioni KNN
     void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred);    
     
     void showLive(const cv::Mat& frame);

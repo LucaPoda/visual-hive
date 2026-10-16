@@ -1,3 +1,4 @@
+// KNNClassifier.cpp
 #include "KNNClassifier.h"
 #include <cmath>
 #include <algorithm>
@@ -5,6 +6,10 @@
 #include <sstream>
 
 KNNClassifier::KNNClassifier(int k) : k_neighbors(k) {}
+
+void KNNClassifier::setK(int k) {
+    k_neighbors = k;
+}
 
 std::vector<float> KNNClassifier::extractFeatures(const AudioMetrics& metrics) const {
     return {

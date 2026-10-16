@@ -1,3 +1,4 @@
+// ConfigManager.h
 #pragma once
 
 #include <string>
@@ -17,17 +18,33 @@ struct AppConfig {
     std::map<std::string, double> foregroundScales;
     int phraseLength;
     double default_bpm;
+    
+    // Parametri estratti
+    unsigned int audioSampleRate;
+    unsigned int audioBufferFrames;
+    int debounceVerse;
+    int debounceBuild;
+    int debounceChorus;
+    size_t knnHistorySize;
+    int strobeDurationMs;
+    int knnKNeighbors;
+    int uiWindowWidth;
+    int uiWindowHeight;
 };
 
 class ConfigManager {
 private:
     AppConfig config;
+    std::string configFilePath;
 
 public:
     ConfigManager(const std::string& configFilePath);
     
     // Getter for the loaded configuration
     const AppConfig& getConfig() const;
+    
+    // Metodo per salvare la configurazione
+    bool saveConfig() const;
     
 private:
     void loadAssetsConfig(const std::string& assetsConfigFilePath);
