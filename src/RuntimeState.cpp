@@ -1,4 +1,3 @@
-// RuntimeState.cpp
 #include "RuntimeState.h"
 #include <opencv2/core/utility.hpp> 
 #include <stdexcept>
@@ -10,8 +9,9 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
       strobeFrameToggle(false),
       isAutoMode(false),           
       currentSongDynamicTarget(BUILD),
-      isBlackout(false), // o true se vuoi il proiettore oscurato
+      isBlackout(false),
       currentEventPhase(AMBIENT),
+      colorMode(0),
       animationStartTime(0),
       lastFrameTime(0),
       nextStrobeTime(std::nullopt),
@@ -24,7 +24,6 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
         throw std::runtime_error("Missing default background or foreground assets.");
     }
 
-    // 1. CUE viene caricato con il Background e Foreground di default
     cueBackground = defaultBg.value();
     cueForeground = defaultFg.value();
 
@@ -35,15 +34,13 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
         std::cerr << "Failed to open default cue foreground.\n";
     }
 
-    // 2. LIVE rimane vuoto: inizializzato a nero (#000000) e senza foreground
     Background blackBg;
     blackBg.set_source(SOLID_COLOR, "#000000");
     blackBg.set_force_no_foreground(true);
     blackBg.open();
     activeBackground = blackBg;
 
-    activeForeground = Foreground(); // Nessun foreground caricato
-    
+    activeForeground = Foreground(); 
     lastFrameTime = cv::getTickCount();
 }
 
@@ -91,18 +88,29 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
     for (const auto& [key, bg] : assets.get_backgrounds()) {
         if (bg.get_source() == activeBackground.get_source()) continue;
         if (!bg.get_is_enabled_global()) continue;
+        
         if (bg.get_event_phase() != currentEventPhase) continue;
         if (bg.get_song_dynamic() != currentSongDynamicTarget) continue;
         
+        // Filtro Colore / Palette
         if (!activePalettes.empty()) {
-            bool paletteFound = false;
-            for (const auto& activePalette : activePalettes) {
-                if (bg.get_primary_color() == activePalette || bg.get_secondary_color() == activePalette) {
-                    paletteFound = true;
-                    break;
-                }
+            bool valid = false;
+            if (colorMode == 0) { 
+                // COLOR MODE: Se definiti, entrambi i colori dell'asset devono essere spuntati
+                bool primOk = bg.get_primary_color().empty() || std::find(activePalettes.begin(), activePalettes.end(), bg.get_primary_color()) != activePalettes.end();
+                bool secOk = bg.get_secondary_color().empty() || std::find(activePalettes.begin(), activePalettes.end(), bg.get_secondary_color()) != activePalettes.end();
+                
+                // Salta l'asset se non matcha le regole colore (esclude anche quelli senza colori se si cerca un colore specifico)
+                if (bg.get_primary_color().empty() && bg.get_secondary_color().empty()) valid = false;
+                else valid = (primOk && secOk);
+                
+            } else { 
+                // PALETTE MODE: L'esatta combinazione "Primario-Secondario" deve essere attiva
+                std::string palKey = bg.get_primary_color() + (bg.get_secondary_color().empty() ? "" : "-" + bg.get_secondary_color());
+                valid = std::find(activePalettes.begin(), activePalettes.end(), palKey) != activePalettes.end();
             }
-            if (!paletteFound) continue;
+            
+            if (!valid) continue;
         }
 
         candidates.push_back(bg);

@@ -40,6 +40,11 @@ std::string getSongDynamicLabel(SongDynamic level) {
 KNNClassifier knnClassifier(21); 
 
 int main() {
+    // Creazione cartella datasets se non esiste
+    if (!fs::exists("datasets")) {
+        fs::create_directory("datasets");
+    }
+
     ConfigManager configManager("config/config.json");
     const AppConfig& config = configManager.getConfig();
     
@@ -49,7 +54,7 @@ int main() {
     
     GraphicsManager graphics(config, targetDisplay);
 
-    // Schermata di caricamento iniziale - render loop forzato corretto
+    // Schermata di caricamento iniziale
     graphics.beginDashboard();
     int display_w, display_h;
     glfwGetFramebufferSize(graphics.getUIWindow(), &display_w, &display_h);
@@ -65,12 +70,15 @@ int main() {
     ImGui::Render();
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(graphics.getUIWindow());
-    glfwPollEvents(); // Assicura che i messaggi OS vengano letti subito
+    glfwPollEvents(); 
 
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
-    knnClassifier.loadDataset("knn_dataset.csv");
+    // Carica il dataset di default se esiste
+    if (fs::exists("datasets/knn_dataset.csv")) {
+        knnClassifier.loadDataset("datasets/knn_dataset.csv");
+    }
 
     AudioAnalyzer audioAnalyzer;
     audioAnalyzer.start(0, config.audioSampleRate, config.audioBufferFrames);

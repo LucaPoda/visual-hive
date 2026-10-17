@@ -1,4 +1,3 @@
-// RuntimeState.h
 #pragma once
 
 #include <chrono>
@@ -22,6 +21,7 @@ struct RuntimeState {
     // New State Variables
     bool isBlackout = false;
     EventPhase currentEventPhase = AMBIENT;
+    int colorMode = 0; // 0 = Color Mode, 1 = Palette Mode
     std::vector<std::string> activePalettes;
 
     // Timing

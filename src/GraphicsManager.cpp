@@ -247,6 +247,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     glfwMakeContextCurrent(uiWindow);
     
     bool openSettingsModal = false;
+    bool openCreateDatasetModal = false;
     
     UpdateGLTexture(liveFrame, liveTextureID);
     UpdateGLTexture(cueFrame, cueTextureID);
@@ -257,8 +258,8 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     
     ImVec2 contentAvail = ImGui::GetContentRegionAvail();
-    float topHeight = contentAvail.y * 0.40f + 15.0f;
-    float bottomHeight = contentAvail.y - topHeight - 32.0f;
+    float topHeight = contentAvail.y * 0.40f + 25.0f;
+    float bottomHeight = contentAvail.y - topHeight - 37.0f;
     
     ImGui::Text("=== SISTEMA DI REGIA VJ ===");
     ImGui::Separator();
@@ -417,12 +418,11 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     if (ImGui::RadioButton("Mid", &ep, MID)) state.currentEventPhase = MID; ImGui::SameLine();
     if (ImGui::RadioButton("High", &ep, HIGH)) state.currentEventPhase = HIGH;
     
-    static int colorMode = 0; // 0 = Color, 1 = Palette
-    ImGui::RadioButton("COLOR MODE", &colorMode, 0); ImGui::SameLine();
-    ImGui::RadioButton("PALETTE MODE", &colorMode, 1);
+    ImGui::RadioButton("COLOR MODE", &state.colorMode, 0); ImGui::SameLine();
+    ImGui::RadioButton("PALETTE MODE", &state.colorMode, 1);
 
     ImGui::Text("Colori/Palette Attivi:");
-    if (colorMode == 0) {
+    if (state.colorMode == 0) {
         const char* colors[] = {"Bianco", "Nero", "Rosso", "Verde", "Blu", "Viola", "Giallo", "Arancione"};
         for (int i = 0; i < 8; i++) {
             bool active = std::find(state.activePalettes.begin(), state.activePalettes.end(), colors[i]) != state.activePalettes.end();
@@ -467,7 +467,92 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
     ImGui::Separator();
+    
     ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
+    ImGui::SameLine();
+
+    // Lettura cartella datasets
+    static std::vector<std::string> datasetFiles;
+    static std::string currentDataset = "knn_dataset.csv";
+    static bool needDatasetRefresh = true;
+    if (needDatasetRefresh) {
+        datasetFiles.clear();
+        for (const auto& entry : fs::directory_iterator("datasets")) {
+            if (entry.path().extension() == ".csv") {
+                datasetFiles.push_back(entry.path().filename().string());
+            }
+        }
+        needDatasetRefresh = false;
+    }
+
+    ImGui::SetNextItemWidth(150.0f);
+    if (ImGui::BeginCombo("##DatasetCombo", currentDataset.c_str())) {
+        for (const auto& ds : datasetFiles) {
+            bool isSelected = (currentDataset == ds);
+            if (ImGui::Selectable(ds.c_str(), isSelected)) {
+                currentDataset = ds;
+                knnClassifier.loadDataset("datasets/" + currentDataset);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Import Preset")) {
+        auto files = openMultipleFilesDialog("Seleziona CSV Dataset", {"csv"});
+        for (const auto& file : files) {
+            fs::path src(file);
+            fs::path dest = fs::path("datasets") / src.filename();
+            try {
+                fs::copy_file(src, dest, fs::copy_options::overwrite_existing);
+                needDatasetRefresh = true;
+                currentDataset = dest.filename().string();
+                knnClassifier.loadDataset(dest.string());
+            } catch (const std::exception& e) {
+                std::cerr << "Errore import dataset: " << e.what() << "\n";
+            }
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Create Preset")) {
+        openCreateDatasetModal = true;
+    }
+
+    // Barra Proporzionale Probabilità
+    ImGui::Dummy(ImVec2(0, 5));
+    struct ConfData { SongDynamic dyn; float val; ImU32 col; const char* name; };
+    std::vector<ConfData> confs = {
+        {VERSE, pred.confVerse, IM_COL32(0, 255, 0, 255), "VERSE"},
+        {BUILD, pred.confBuild, IM_COL32(255, 255, 0, 255), "BUILD"},
+        {CHORUS, pred.confChorus, IM_COL32(255, 0, 0, 255), "CHORUS"}
+    };
+    std::sort(confs.begin(), confs.end(), [](const ConfData& a, const ConfData& b) { return a.val > b.val; });
+
+    ImVec2 barPos = ImGui::GetCursorScreenPos();
+    float barWidth = ImGui::GetContentRegionAvail().x;
+    float barHeight = 15.0f;
+    float currentX = barPos.x;
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    for (const auto& c : confs) {
+        float w = barWidth * c.val;
+        if (w > 0) {
+            drawList->AddRectFilled(ImVec2(currentX, barPos.y), ImVec2(currentX + w, barPos.y + barHeight), c.col);
+            currentX += w;
+        }
+    }
+    ImGui::Dummy(ImVec2(barWidth, barHeight));
+
+    auto getDynName = [](SongDynamic d) -> const char* {
+        if (d == VERSE) return "VERSE";
+        if (d == BUILD) return "BUILD";
+        if (d == CHORUS) return "CHORUS";
+        return "MANUAL";
+    };
+
+    ImGui::Text("Current Label: [%s] %.0f%%", confs[0].name, confs[0].val * 100.0f);
+    ImGui::SameLine(ImGui::GetWindowWidth() / 2.0f);
+    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Active Label: [%s]", getDynName(state.currentSongDynamicTarget));
+
     ImGui::EndChild();
     
     ImGui::EndChild();
@@ -633,6 +718,74 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
     };
 
+    // ================= MODALE CREAZIONE DATASET ================= //
+    if (openCreateDatasetModal) ImGui::OpenPopup("Create Dataset Preset");
+    ImGui::SetNextWindowSizeConstraints(ImVec2(500, 400), ImVec2(FLT_MAX, FLT_MAX));
+    if (ImGui::BeginPopupModal("Create Dataset Preset", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
+        static char newDatasetName[128] = "new_dataset";
+        ImGui::InputText("Nome Preset", newDatasetName, sizeof(newDatasetName));
+        ImGui::Dummy(ImVec2(0, 10));
+
+        auto drawCompactMeter = [](const char* label, float value, ImVec4 color) {
+            ImGui::Text("%s", label);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
+            ImGui::ProgressBar(std::clamp(value, 0.0f, 1.0f), ImVec2(-1, 8), "");
+            ImGui::PopStyleColor();
+        };
+
+        ImGui::Text("Audio Features (Real-Time)");
+        drawCompactMeter("RMS (Volume)", audioData.rms, ImVec4(0.9f, 0.9f, 0.9f, 1.0f)); 
+        
+        ImGui::Columns(2, "KNNFeaturesGrid", false);
+        drawCompactMeter("SubBass",      audioData.bandSubBass, ImVec4(0.6f, 0.2f, 0.8f, 1.0f)); 
+        drawCompactMeter("Bass",         audioData.bandBass, ImVec4(0.8f, 0.3f, 0.3f, 1.0f)); 
+        ImGui::NextColumn();
+        drawCompactMeter("HighMid",      audioData.bandHighMid, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); 
+        drawCompactMeter("Spec Flux",    audioData.spectralFlux, ImVec4(1.0f, 0.2f, 0.8f, 1.0f)); 
+        ImGui::Columns(1);
+
+        ImGui::Dummy(ImVec2(0, 15));
+        ImGui::Text("Acquisizione Dati (Tieni premuto per registrare campioni)");
+        ImGui::Separator();
+        
+        static int countVerse = 0, countBuild = 0, countChorus = 0;
+        
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
+        if (ImGui::Button("Rec VERSE", ImVec2(150, 40))) { knnClassifier.addSample(audioData, VERSE); countVerse++; }
+        ImGui::PopStyleColor();
+        ImGui::SameLine(); ImGui::Text("Campioni: %d", countVerse);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.8f, 0.2f, 1.0f));
+        if (ImGui::Button("Rec BUILD", ImVec2(150, 40))) { knnClassifier.addSample(audioData, BUILD); countBuild++; }
+        ImGui::PopStyleColor();
+        ImGui::SameLine(); ImGui::Text("Campioni: %d", countBuild);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+        if (ImGui::Button("Rec CHORUS", ImVec2(150, 40))) { knnClassifier.addSample(audioData, CHORUS); countChorus++; }
+        ImGui::PopStyleColor();
+        ImGui::SameLine(); ImGui::Text("Campioni: %d", countChorus);
+
+        ImGui::Dummy(ImVec2(0, 20));
+        if (ImGui::Button("Annulla")) {
+            countVerse = countBuild = countChorus = 0;
+            knnClassifier.clearTemporaryDataset(); // Svuota i campioni temporanei registrati per errore
+            knnClassifier.loadDataset("datasets/" + currentDataset); 
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Salva e Chiudi", ImVec2(150, 0))) {
+            std::string destPath = "datasets/" + std::string(newDatasetName) + ".csv";
+            knnClassifier.commitTemporaryDataset(); // Applica i campioni temporanei al dataset principale
+            knnClassifier.saveDataset(destPath);
+            currentDataset = std::string(newDatasetName) + ".csv";
+            needDatasetRefresh = true;
+            countVerse = countBuild = countChorus = 0;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
+    }
+
+
     // ================= MODALE UNIFICATA IMPOSTAZIONI ================= //
     if (openSettingsModal) {
         ImGui::OpenPopup("Settings");
@@ -650,7 +803,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             if (ImGui::BeginTabItem("Backgrounds", nullptr, bgFlags)) {
                 if (targetSettingsTab == "Backgrounds") targetSettingsTab = "";
                 
-                // Unica scroll area per questa tab, lascia 50px sul fondo liberi per i bottoni "chiudi"
                 if (ImGui::BeginChild("BgTabScrollArea", ImVec2(0, ImGui::GetContentRegionAvail().y - 50.0f), false)) {
                     if (ImGui::Button("Importa Background")) {
                         auto files = openMultipleFilesDialog("Seleziona Video Background", {"mp4", "mov", "avi", "mkv"});
@@ -692,7 +844,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                             while (it != assetMgr.getStagingBackgrounds().end()) {
                                 auto& [bg, task] = *it;
 
-                                // FIX BUG THUMBNAIL: Inizializza PRIMA di mostrare la riga per evitare un cache errato
                                 if (task->isDone && bg.get_primary_color().empty() && !task->primaryColor.empty()) {
                                     bg.set_primary_color(task->primaryColor);
                                     bg.set_secondary_color(task->secondaryColor);
