@@ -9,6 +9,13 @@
 #include <chrono>
 #include <deque>
 
+#define GL_SILENCE_DEPRECATION
+#define GLFW_INCLUDE_GLCOREARB
+#include <GLFW/glfw3.h>
+#include "imgui.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_opengl3.h"
+
 // Internal Headers
 #include "ConfigManager.h"
 #include "AssetManager.h"
@@ -40,6 +47,26 @@ int main() {
     
     DisplayInfo targetDisplay = selectTargetDisplay();
     
+    GraphicsManager graphics(config, targetDisplay);
+
+    // Schermata di caricamento iniziale - render loop forzato corretto
+    graphics.beginDashboard();
+    int display_w, display_h;
+    glfwGetFramebufferSize(graphics.getUIWindow(), &display_w, &display_h);
+    glViewport(0, 0, display_w, display_h);
+    glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    ImGui::SetNextWindowPos(ImVec2(display_w * 0.5f, display_h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::Begin("Loading", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_AlwaysAutoResize);
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "Caricamento Asset in corso...");
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(graphics.getUIWindow());
+    glfwPollEvents(); // Assicura che i messaggi OS vengano letti subito
+
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
@@ -71,7 +98,6 @@ int main() {
 
     try {
         RuntimeState state(assetManager);
-        GraphicsManager graphics(config, targetDisplay);
 
         std::cout << "[INFO] System initialized. Starting loop.\n";
 

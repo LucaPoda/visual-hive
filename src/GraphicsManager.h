@@ -27,6 +27,7 @@ private:
     int displayWidth;
     int displayHeight;
     int strobeDurationMs;
+    AppConfig localConfig; 
 
     GLFWwindow* uiWindow;
     GLFWwindow* projectorWindow; 
@@ -36,6 +37,8 @@ private:
     GLuint projectorTexID = 0;   
 
     std::map<std::string, GLuint> thumbnailCache;
+    std::string targetSettingsTab; // Gestisce l'apertura mirata delle schede delle impostazioni
+
     GLuint getOrCreateThumbnail(const std::string& key, const cv::Mat& firstFrame, bool isGrayscale = false);
 
     GLuint quadVAO, quadVBO, shaderProgram;
@@ -43,10 +46,14 @@ private:
 
     cv::Mat scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor = cv::Scalar(0, 0, 0));
     void UpdateGLTexture(const cv::Mat& mat, GLuint& textureID);
+    
+    void drawPaletteSquare(const std::string& primary, const std::string& secondary, float size);
 
 public:
     GraphicsManager(const AppConfig& config, const DisplayInfo& display);
     ~GraphicsManager();
+
+    GLFWwindow* getUIWindow() const { return uiWindow; } 
 
     void createProjectorWindow(int monitorIndex);
 

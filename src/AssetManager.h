@@ -168,6 +168,7 @@ class Foreground {
     std::string asset_source;
     std::string key;
     bool forceOriginalColors = false;
+    bool isRamData = false;
 
     std::string primaryColor = "";
     std::string secondaryColor = "";
@@ -190,6 +191,7 @@ class Foreground {
         this->asset_source = asset_source; 
     }
     const std::string get_foreground_path() const;
+    std::string get_source() const { return asset_source; }
     
     const cv::Mat get_first_frame() const;
 
@@ -210,6 +212,8 @@ class Foreground {
 
     int get_font_size() const { return fontSize; }
     void set_font_size(int size) { this->fontSize = size; }
+    
+    void set_is_ram_data(bool val) { this->isRamData = val; }
 
     void set_raw_data(const cv::Mat& rawMat) {
         this->data = rawMat.clone();
@@ -284,7 +288,7 @@ private:
     std::map<char, cv::Mat> foregroundCache; 
 
     std::vector<std::pair<Background, std::shared_ptr<VideoAnalysisTask>>> stagingBackgrounds;
-    std::vector<std::pair<Foreground, std::shared_ptr<VideoAnalysisTask>>> stagingForegrounds;
+    std::vector<Foreground> stagingForegrounds; // Aggiunto per l'area staging dei foreground
     std::vector<std::thread> analysisThreads;
     
 public:
@@ -307,7 +311,7 @@ public:
 
     std::shared_ptr<VideoAnalysisTask> analyzeVideoAsync(const std::string& filepath);
     std::vector<std::pair<Background, std::shared_ptr<VideoAnalysisTask>>>& getStagingBackgrounds() { return stagingBackgrounds; }
-    std::vector<std::pair<Foreground, std::shared_ptr<VideoAnalysisTask>>>& getStagingForegrounds() { return stagingForegrounds; }
+    std::vector<Foreground>& getStagingForegrounds() { return stagingForegrounds; }
 
     void saveAssetsConfig();
 

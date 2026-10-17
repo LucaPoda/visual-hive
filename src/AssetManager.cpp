@@ -232,11 +232,12 @@ const std::string Foreground::get_foreground_path() const {
 }
 
 const cv::Mat Foreground::get_first_frame() const {
-    if (this->asset_source == "RAW_RAM_DATA") return cv::Mat(); 
+    if (this->isRamData || this->asset_source == "RAW_RAM_DATA") return cv::Mat(); 
     return cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
 }
 
 bool Foreground::open() {
+    if (this->isRamData) return !this->data.empty();
     this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
     return !this->data.empty();
 }
@@ -244,7 +245,7 @@ bool Foreground::open() {
 void Foreground::close() {}
 
 cv::Mat Foreground::get_next_frame() {
-    if (this->data.empty()) this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+    if (!this->isRamData && this->data.empty()) this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
     return this->data;
 }   
 
@@ -545,5 +546,6 @@ Foreground AssetManager::createTextForeground(const std::string& text, int fontS
     fg.set_scale(1.0);
     fg.set_raw_data(frame);
     fg.set_force_original_colors(true);
+    fg.set_is_ram_data(true);
     return fg;
 }
