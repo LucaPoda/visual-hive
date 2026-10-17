@@ -1,4 +1,3 @@
-// GraphicsManager.h
 #pragma once
 
 #include <opencv2/opencv.hpp>
@@ -20,7 +19,7 @@
 #include "AssetManager.h"
 #include "RuntimeState.h"
 #include "AudioAnalyzer.h"
-#include "KNNClassifier.h" // Per la struct KNNPrediction
+#include "KNNClassifier.h" 
 
 class GraphicsManager {
 private:

@@ -1,16 +1,18 @@
-// AssetManager.h
 #pragma once
 
 #include <vector>
 #include <string>
 #include <optional>
 #include <map>
+#include <atomic>
+#include <thread>
+#include <memory>
 #include <opencv2/opencv.hpp>
+#include <nlohmann/json.hpp>
 #include "ConfigManager.h"
 
 namespace fs = std::filesystem;
 
-// Enum for Event Phase
 enum EventPhase {
     AMBIENT,
     LOW,
@@ -18,7 +20,6 @@ enum EventPhase {
     HIGH
 };
 
-// Enum for Song Dynamic
 enum SongDynamic {
     VERSE,
     BUILD,
@@ -26,14 +27,21 @@ enum SongDynamic {
     MANUAL
 };
 
-// Enum to differentiate between background and foreground assets
 enum BackgroundType {
     VIDEO_LOOP,
     SOLID_COLOR,
     WINDOW_CAPTURE
 };
 
-// Struct to represent a visual asset
+struct VideoAnalysisTask {
+    std::string filepath;
+    std::atomic<float> progress{0.0f};
+    std::atomic<bool> isDone{false};
+    std::string primaryColor;
+    std::string secondaryColor;
+    int bestFrameIndex = 0;
+};
+
 class Background {
     public:
     static fs::path backgroundsPath;
@@ -43,8 +51,8 @@ class Background {
 
     private:
     std::string key;
-    std::string asset_source; // HEX color or file path
-    std::vector<int64_t> foregroundColor;
+    std::string asset_source; 
+    std::vector<int64_t> foregroundColor = {255, 255, 255};
     
     long long lastVideoFrameTime = 0;
     cv::Mat currentVideoFrame;
@@ -52,7 +60,9 @@ class Background {
     BackgroundType type;
     EventPhase eventPhase = AMBIENT;
     SongDynamic songDynamic = VERSE;
-    std::string paletteColor = "";
+    std::string primaryColor = "";
+    std::string secondaryColor = "";
+    int thumbnailFrameIndex = 0;
     bool isEnabledGlobal = true;
 
     bool forceNoForeground = false;
@@ -60,7 +70,7 @@ class Background {
     cv::VideoCapture video_loop_cap;
     cv::Mat solid_color_img;
 
-    int captureWindowId = -1; // Store the ID of the window to capture
+    int captureWindowId = -1; 
     std::string targetAppName;
     std::string targetWindowName;
 
@@ -79,33 +89,29 @@ class Background {
     std::string get_source() const { return asset_source; }
 
     const cv::Scalar get_foreground_color() const { 
+        if(foregroundColor.size() < 3) return cv::Scalar(255,255,255);
         int64_t r = foregroundColor[0];
         int64_t g = foregroundColor[1];
         int64_t b = foregroundColor[2];
-        cv::Scalar obj(b, g, r); 
-        return obj;
+        return cv::Scalar(b, g, r); 
     }
 
     cv::Scalar get_mutable_foreground_color() { 
+        if(foregroundColor.size() < 3) return cv::Scalar(255,255,255);
         int64_t r = foregroundColor[0];
         int64_t g = foregroundColor[1];
         int64_t b = foregroundColor[2];
-        cv::Scalar obj(b, g, r); 
-        return obj;
+        return cv::Scalar(b, g, r); 
     }
 
     void set_foreground_color(const cv::Scalar & value) { 
-        int64_t b = value[0];
-        int64_t g = value[1];
-        int64_t r = value[2];
-
-        this->foregroundColor = { r, g, b };
+        this->foregroundColor = { static_cast<int64_t>(value[2]), static_cast<int64_t>(value[1]), static_cast<int64_t>(value[0]) };
     }
 
     const std::optional<cv::Scalar> get_background_color() const;
     const std::optional<std::string> get_background_path() const;
 
-    const cv::Mat get_first_frame() const;
+    const cv::Mat get_first_frame();
     const cv::Mat get_solid_color_frame(int width, int height, const cv::Scalar& color) const;
 
     const EventPhase& get_event_phase() const { return eventPhase; }
@@ -114,8 +120,14 @@ class Background {
     const SongDynamic& get_song_dynamic() const { return songDynamic; }
     void set_song_dynamic(const SongDynamic& dynamic) { this->songDynamic = dynamic; }
 
-    const std::string& get_palette_color() const { return paletteColor; }
-    void set_palette_color(const std::string& color) { this->paletteColor = color; }
+    const std::string& get_primary_color() const { return primaryColor; }
+    void set_primary_color(const std::string& color) { this->primaryColor = color; }
+
+    const std::string& get_secondary_color() const { return secondaryColor; }
+    void set_secondary_color(const std::string& color) { this->secondaryColor = color; }
+
+    int get_thumbnail_frame_index() const { return thumbnailFrameIndex; }
+    void set_thumbnail_frame_index(int index) { this->thumbnailFrameIndex = index; }
 
     bool get_is_enabled_global() const { return isEnabledGlobal; }
     void set_is_enabled_global(bool enabled) { this->isEnabledGlobal = enabled; }
@@ -152,12 +164,13 @@ class Foreground {
     virtual ~Foreground() = default;
 
     private:
-    double scale;
+    double scale = 1.0;
     std::string asset_source;
     std::string key;
     bool forceOriginalColors = false;
 
-    std::string paletteColor = "";
+    std::string primaryColor = "";
+    std::string secondaryColor = "";
     bool isEnabledGlobal = true;
     std::string customText = "";
     int fontSize = 32;
@@ -183,8 +196,11 @@ class Foreground {
     const bool& get_force_original_colors() const { return forceOriginalColors; }
     void set_force_original_colors(bool value) { this->forceOriginalColors = value; }
 
-    const std::string& get_palette_color() const { return paletteColor; }
-    void set_palette_color(const std::string& color) { this->paletteColor = color; }
+    const std::string& get_primary_color() const { return primaryColor; }
+    void set_primary_color(const std::string& color) { this->primaryColor = color; }
+
+    const std::string& get_secondary_color() const { return secondaryColor; }
+    void set_secondary_color(const std::string& color) { this->secondaryColor = color; }
 
     bool get_is_enabled_global() const { return isEnabledGlobal; }
     void set_is_enabled_global(bool enabled) { this->isEnabledGlobal = enabled; }
@@ -195,7 +211,6 @@ class Foreground {
     int get_font_size() const { return fontSize; }
     void set_font_size(int size) { this->fontSize = size; }
 
-    // NUOVO: Permette di bypassare open() assegnando direttamente i dati dell'immagine
     void set_raw_data(const cv::Mat& rawMat) {
         this->data = rawMat.clone();
         this->asset_source = "RAW_RAM_DATA";
@@ -242,7 +257,6 @@ class AssetsConfig {
     std::map<std::string, Foreground> foregrounds;
     Default default_config;
     
-
     public:
     const std::map<std::string, Background> & get_backgrounds() const { return backgrounds; }
     std::map<std::string, Background> & get_mutable_backgrounds() { return backgrounds; }
@@ -268,26 +282,34 @@ private:
     std::string lastForegroundPath; 
     cv::Mat lastBlendedForeground;
     std::map<char, cv::Mat> foregroundCache; 
+
+    std::vector<std::pair<Background, std::shared_ptr<VideoAnalysisTask>>> stagingBackgrounds;
+    std::vector<std::pair<Foreground, std::shared_ptr<VideoAnalysisTask>>> stagingForegrounds;
+    std::vector<std::thread> analysisThreads;
     
 public:
     AssetManager(const AppConfig& config);
+    ~AssetManager();
     void initializeAssets();
     
     cv::Mat blend(const cv::Mat& background, const cv::Mat& foregroundAsset, int screenWidth, int screenHeight, double foregroundScalePercent, cv::Scalar foregroundColor, bool forceOriginalColor = false);
 
     const AssetsConfig& getAssets() const { return assets; }
-    AssetsConfig& getMutableAssets() { return assets; } // Utile per modificare i global flags via UI
+    AssetsConfig& getMutableAssets() { return assets; }
 
     std::optional<Background> getDefaultBackground();
     std::optional<Foreground> getDefaultForeground();
-
     std::optional<Background> getBackroundByPressedKey(char key);
     std::optional<Foreground> getForegroundByPressedKey(char key);
 
-    static std::string analyzeFramePalette(const cv::Mat& frame);
-
-    // NUOVO: Supporto Testo Live
+    static std::pair<std::string, std::string> analyzeFramePalette(const cv::Mat& frame);
     Foreground createTextForeground(const std::string& text, int fontSize);
+
+    std::shared_ptr<VideoAnalysisTask> analyzeVideoAsync(const std::string& filepath);
+    std::vector<std::pair<Background, std::shared_ptr<VideoAnalysisTask>>>& getStagingBackgrounds() { return stagingBackgrounds; }
+    std::vector<std::pair<Foreground, std::shared_ptr<VideoAnalysisTask>>>& getStagingForegrounds() { return stagingForegrounds; }
+
+    void saveAssetsConfig();
 
 private:
     char displayAndGetKey(const std::string& windowName, const cv::Mat asset);

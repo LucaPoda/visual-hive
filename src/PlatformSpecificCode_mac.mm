@@ -4,6 +4,7 @@
 
 #ifdef __APPLE__
 #import <Foundation/Foundation.h>
+#import <AppKit/AppKit.h>
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreMedia/CoreMedia.h>
 #import <CoreVideo/CoreVideo.h>
@@ -151,6 +152,34 @@ cv::Mat getLatestWindowFrame() {
     // If no frame has arrived yet, this returns an empty Mat, 
     // which your GraphicsManager's `scaleToFit` already knows how to handle safely.
     return currentLatestFrame.clone(); 
+}
+
+std::vector<std::string> openMultipleFilesDialog(const std::string& title, const std::vector<std::string>& allowedExtensions) {
+    std::vector<std::string> selectedFiles;
+    
+    @autoreleasepool {
+        NSOpenPanel* panel = [NSOpenPanel openPanel];
+        [panel setTitle:[NSString stringWithUTF8String:title.c_str()]];
+        [panel setCanChooseFiles:YES];
+        [panel setCanChooseDirectories:NO];
+        [panel setAllowsMultipleSelection:YES];
+        
+        if (!allowedExtensions.empty()) {
+            NSMutableArray<NSString*>* nsExtensions = [NSMutableArray arrayWithCapacity:allowedExtensions.size()];
+            for (const auto& ext : allowedExtensions) {
+                [nsExtensions addObject:[NSString stringWithUTF8String:ext.c_str()]];
+            }
+            [panel setAllowedFileTypes:nsExtensions];
+        }
+        
+        if ([panel runModal] == NSModalResponseOK) {
+            for (NSURL* url in [panel URLs]) {
+                selectedFiles.push_back(std::string([[url path] UTF8String]));
+            }
+        }
+    }
+    
+    return selectedFiles;
 }
 
 #endif // __APPLE__

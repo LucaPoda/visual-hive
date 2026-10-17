@@ -5,13 +5,13 @@
 #include <opencv2/opencv.hpp>
 
 struct DisplayInfo {
-    int id; // A simple ID for user selection
+    int id; 
     int width;
     int height;
-    std::string name; // Generic name for now
-    int x; // Origin X
-    int y; // Origin Y
-    bool isPrimary; // Renamed from isMain for cross-platform consistency
+    std::string name; 
+    int x; 
+    int y; 
+    bool isPrimary; 
 };
 
 DisplayInfo selectTargetDisplay();
@@ -28,3 +28,6 @@ std::vector<WindowInfo> getOpenWindows();
 void startWindowCapture(int windowID);
 void stopWindowCapture();
 cv::Mat getLatestWindowFrame();
+
+// Native File Picker per Import Multiplo
+std::vector<std::string> openMultipleFilesDialog(const std::string& title, const std::vector<std::string>& allowedExtensions);

@@ -90,17 +90,14 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
 
     for (const auto& [key, bg] : assets.get_backgrounds()) {
         if (bg.get_source() == activeBackground.get_source()) continue;
-        
         if (!bg.get_is_enabled_global()) continue;
-        
         if (bg.get_event_phase() != currentEventPhase) continue;
-        
         if (bg.get_song_dynamic() != currentSongDynamicTarget) continue;
         
         if (!activePalettes.empty()) {
             bool paletteFound = false;
             for (const auto& activePalette : activePalettes) {
-                if (bg.get_palette_color() == activePalette) {
+                if (bg.get_primary_color() == activePalette || bg.get_secondary_color() == activePalette) {
                     paletteFound = true;
                     break;
                 }
@@ -111,17 +108,12 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
         candidates.push_back(bg);
     }
 
-    if (candidates.empty()) {
-        std::cerr << "[WARNING] triggerAutoSwitch: Nessun background candidato trovato coi filtri attuali.\n";
-        return;
-    }
-
+    if (candidates.empty()) return;
+    
     static std::random_device rd;
     static std::mt19937 gen(rd());
     std::uniform_int_distribution<> distr(0, candidates.size() - 1);
-    
-    Background selected = candidates[distr(gen)];
-    switchBackground(selected);
+    switchBackground(candidates[distr(gen)]);
 }
 
 void RuntimeState::transitionCueToLive() {
