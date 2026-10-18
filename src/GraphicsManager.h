@@ -1,3 +1,4 @@
+// GraphicsManager.h
 #pragma once
 
 #include <opencv2/opencv.hpp>
@@ -37,7 +38,17 @@ private:
     GLuint projectorTexID = 0;   
 
     std::map<std::string, GLuint> thumbnailCache;
-    std::string targetSettingsTab; // Gestisce l'apertura mirata delle schede delle impostazioni
+    std::string targetSettingsTab; 
+
+    // Variabili per la Preview on Hover
+    cv::VideoCapture hoverCap;
+    std::string currentHoverPath;
+    GLuint hoverTextureID = 0;
+
+    double hoverStartTime = 0.0;
+    std::string pendingHoverPath = "";
+    double lastPreviewFrameTime = 0.0;
+    double previewTargetFps = 30.0;
 
     GLuint getOrCreateThumbnail(const std::string& key, const cv::Mat& firstFrame, bool isGrayscale = false);
 

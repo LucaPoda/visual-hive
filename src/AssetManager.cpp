@@ -3,6 +3,7 @@
 #include <fstream>
 #include <filesystem>
 #include <algorithm>
+#include <cmath>
 #include <opencv2/highgui.hpp>
 #include <opencv2/imgproc.hpp>
 #include <opencv2/videoio.hpp>
@@ -31,7 +32,6 @@ void from_json(const nlohmann::json& j, Background& b) {
     b.primaryColor = j.value("primary_color", "");
     b.secondaryColor = j.value("secondary_color", "");
     b.thumbnailFrameIndex = j.value("thumbnail_frame_index", 0);
-    b.isEnabledGlobal = j.value("is_enabled_global", true);
     b.forceNoForeground = j.value("force_no_foreground", false);
     
     if (j.contains("app_name")) b.set_target_app_name(j.at("app_name").get<std::string>());
@@ -47,7 +47,6 @@ void to_json(nlohmann::json& j, const Background& b) {
         {"primary_color", b.primaryColor},
         {"secondary_color", b.secondaryColor},
         {"thumbnail_frame_index", b.thumbnailFrameIndex},
-        {"is_enabled_global", b.isEnabledGlobal},
         {"force_no_foreground", b.forceNoForeground}
     };
     if (b.get_type() == WINDOW_CAPTURE) {
@@ -63,7 +62,6 @@ void to_json(nlohmann::json& j, const Foreground& f) {
         {"force_original_colors", f.forceOriginalColors},
         {"primary_color", f.primaryColor},
         {"secondary_color", f.secondaryColor},
-        {"is_enabled_global", f.isEnabledGlobal},
         {"custom_text", f.customText},
         {"font_size", f.fontSize}
     };
@@ -75,7 +73,6 @@ void from_json(const nlohmann::json& j, Foreground& f) {
     if(j.contains("force_original_colors")) j.at("force_original_colors").get_to(f.forceOriginalColors);
     f.primaryColor = j.value("primary_color", "");
     f.secondaryColor = j.value("secondary_color", "");
-    f.isEnabledGlobal = j.value("is_enabled_global", true);
     f.customText = j.value("custom_text", "");
     f.fontSize = j.value("font_size", 32);
 }
@@ -122,12 +119,12 @@ const std::optional<cv::Scalar> Background::get_background_color() const {
 }
 
 const std::optional<std::string> Background::get_background_path() const {
-    return (type == VIDEO_LOOP) ? std::optional<std::string>(backgroundsPath / asset_source) : std::nullopt;
+    return (type == VIDEO_LOOP) ? std::optional<std::string>(this->get_full_path()) : std::nullopt;
 }
 
 const cv::Mat Background::get_first_frame() {
     if (this->type == VIDEO_LOOP) {
-        cv::VideoCapture cap(this->get_background_path().value());
+        cv::VideoCapture cap(this->get_full_path());
         if (!cap.isOpened()) return cv::Mat::zeros(1080, 1920, CV_8UC3);
         
         cap.set(cv::CAP_PROP_POS_FRAMES, thumbnailFrameIndex); 
@@ -142,7 +139,7 @@ const cv::Mat Background::get_first_frame() {
 
 bool Background::open() {
     if (this->type == VIDEO_LOOP) {
-        this->video_loop_cap.open(this->get_background_path().value());
+        this->video_loop_cap.open(this->get_full_path());
         this->lastVideoFrameTime = 0; 
         this->currentVideoFrame.release();
         return this->video_loop_cap.isOpened();
@@ -228,45 +225,73 @@ double Background::get_fps() {
 }
 
 const std::string Foreground::get_foreground_path() const {
-    return foregroundsPath / this->asset_source;
+    return this->get_full_path();
 }
 
 const cv::Mat Foreground::get_first_frame() const {
     if (this->isRamData || this->asset_source == "RAW_RAM_DATA") return cv::Mat(); 
-    return cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+    return cv::imread(this->get_full_path(), cv::IMREAD_UNCHANGED);
 }
 
 bool Foreground::open() {
     if (this->isRamData) return !this->data.empty();
-    this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+    this->data = cv::imread(this->get_full_path(), cv::IMREAD_UNCHANGED);
     return !this->data.empty();
 }
 
 void Foreground::close() {}
 
 cv::Mat Foreground::get_next_frame() {
-    if (!this->isRamData && this->data.empty()) this->data = cv::imread(this->get_foreground_path(), cv::IMREAD_UNCHANGED);
+    if (!this->isRamData && this->data.empty()) this->data = cv::imread(this->get_full_path(), cv::IMREAD_UNCHANGED);
     return this->data;
 }   
 
 cv::Mat Foreground::get_current_frame() const { return this->data; }
 
-AssetManager::AssetManager(const AppConfig& config) : appConfig(config) {
+AssetManager::AssetManager(const AppConfig& config) : appConfig(config), isReady(false) {
+    if (!fs::exists("assets/optimized")) fs::create_directories("assets/optimized");
+    if (!fs::exists("assets/foregrounds")) fs::create_directories("assets/foregrounds");
+    
     std::ifstream jsonFile(config.assetsConfigFile);
     if (!jsonFile.is_open()) {
         std::cout << "[INFO] File di configurazione " << config.assetsConfigFile 
                   << " non trovato. Inizializzazione di un AssetManager vuoto e creazione del file..." << std::endl;
-        assets = AssetsConfig(); // Crea la struttura vuota
-        saveAssetsConfig();      // Salva fisicamente il JSON sul disco
+        assets = AssetsConfig(); 
+        saveAssetsConfig();      
     } else {
         nlohmann::json data;
         jsonFile >> data; 
         assets = data.get<AssetsConfig>();
     }
+
+    // Inizializzazione del Thread Pool per le analisi
+    unsigned int numThreads = std::thread::hardware_concurrency();
+    numThreads = (numThreads == 0) ? 2 : std::min(numThreads, 4u); // Limite a 4 workers massimi per salvaguardare I/O disco
+    
+    for (unsigned int i = 0; i < numThreads; ++i) {
+        workerThreads.emplace_back([this]() {
+            while (true) {
+                std::function<void()> task;
+                {
+                    std::unique_lock<std::mutex> lock(queueMutex);
+                    condition.wait(lock, [this] { return stopPool || !taskQueue.empty(); });
+                    if (stopPool && taskQueue.empty()) return;
+                    task = std::move(taskQueue.front());
+                    taskQueue.pop();
+                }
+                task();
+            }
+        });
+    }
 }
 
 AssetManager::~AssetManager() {
-    for (auto& t : analysisThreads) {
+    {
+        std::unique_lock<std::mutex> lock(queueMutex);
+        stopPool = true;
+    }
+    condition.notify_all();
+    for (auto& t : workerThreads) {
         if (t.joinable()) t.join();
     }
 }
@@ -274,9 +299,23 @@ AssetManager::~AssetManager() {
 std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::string& filepath) {
     auto task = std::make_shared<VideoAnalysisTask>();
     task->filepath = filepath;
-    analysisThreads.emplace_back([task]() {
+    
+    // Invece di spawnare un thead bruto, prepariamo il lavoro per la coda
+    auto work = [task]() {
+        fs::path p(task->filepath);
+        std::string filename_without_ext = p.stem().string();
+        std::string outFilename = filename_without_ext + ".avi";
+        std::string outPath = "assets/optimized/" + outFilename;
+        
         cv::VideoCapture cap(task->filepath);
         if (!cap.isOpened()) { task->isDone = true; return; }
+
+        double originalFps = cap.get(cv::CAP_PROP_FPS);
+        if (originalFps <= 0.0 || std::isnan(originalFps)) {
+            originalFps = 30.0;
+        }
+
+        cv::VideoWriter writer(outPath, cv::VideoWriter::fourcc('M','J','P','G'), originalFps, cv::Size(1920, 1080));
 
         int totalFrames = cap.get(cv::CAP_PROP_FRAME_COUNT);
         int frameStep = 10;
@@ -285,18 +324,19 @@ std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::st
 
         std::map<std::string, int> globalColorCounts;
 
-        struct NamedColor { std::string name; cv::Vec3b bgr; };
+        struct NamedColor { std::string name; };
         std::vector<NamedColor> baseColors = {
-            {"Bianco", cv::Vec3b(255, 255, 255)}, {"Nero", cv::Vec3b(0, 0, 0)},
-            {"Rosso", cv::Vec3b(0, 0, 255)}, {"Verde", cv::Vec3b(0, 255, 0)},
-            {"Blu", cv::Vec3b(255, 0, 0)}, {"Viola", cv::Vec3b(128, 0, 128)},
-            {"Giallo", cv::Vec3b(0, 255, 255)}, {"Arancione", cv::Vec3b(0, 165, 255)}
+            {"Bianco"}, {"Nero"}, {"Rosso"}, {"Verde"}, {"Blu"}, {"Viola"}, {"Giallo"}, {"Arancione"}
         };
         for(const auto& bc : baseColors) globalColorCounts[bc.name] = 0;
 
         cv::Mat frame;
         int frameIdx = 0;
         while (cap.read(frame)) {
+            cv::Mat resizedFrame;
+            cv::resize(frame, resizedFrame, cv::Size(1920, 1080));
+            writer.write(resizedFrame);
+            
             if (frameIdx % frameStep == 0 && !frame.empty()) {
                 cv::Mat mean, stddev;
                 cv::meanStdDev(frame, mean, stddev);
@@ -306,19 +346,28 @@ std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::st
                     bestFrame = frameIdx;
                 }
                 
-                cv::Mat resized;
+                cv::Mat resized, hsvFrame;
                 cv::resize(frame, resized, cv::Size(32, 32), 0, 0, cv::INTER_NEAREST);
-                for (int y = 0; y < resized.rows; ++y) {
-                    for (int x = 0; x < resized.cols; ++x) {
-                        cv::Vec3b pixel = resized.at<cv::Vec3b>(y, x);
-                        int minDist = std::numeric_limits<int>::max();
-                        std::string closestName = "";
-                        for (const auto& bc : baseColors) {
-                            int db = pixel[0] - bc.bgr[0], dg = pixel[1] - bc.bgr[1], dr = pixel[2] - bc.bgr[2];
-                            int distSq = db*db + dg*dg + dr*dr;
-                            if (distSq < minDist) { minDist = distSq; closestName = bc.name; }
+                cv::cvtColor(resized, hsvFrame, cv::COLOR_BGR2HSV);
+                
+                for (int y = 0; y < hsvFrame.rows; ++y) {
+                    for (int x = 0; x < hsvFrame.cols; ++x) {
+                        cv::Vec3b pixel = hsvFrame.at<cv::Vec3b>(y, x);
+                        int h = pixel[0], s = pixel[1], v = pixel[2];
+                        
+                        std::string colorName = "";
+                        if (v < 40) colorName = "Nero";
+                        else if (s < 40 && v > 200) colorName = "Bianco";
+                        else {
+                            if (h <= 10 || h >= 160) colorName = "Rosso";
+                            else if (h >= 11 && h <= 25) colorName = "Arancione";
+                            else if (h >= 26 && h <= 35) colorName = "Giallo";
+                            else if (h >= 36 && h <= 85) colorName = "Verde";
+                            else if (h >= 86 && h <= 130) colorName = "Blu";
+                            else if (h >= 131 && h <= 159) colorName = "Viola";
+                            else colorName = "Nero"; 
                         }
-                        globalColorCounts[closestName]++;
+                        if (!colorName.empty()) globalColorCounts[colorName]++;
                     }
                 }
                 
@@ -335,14 +384,29 @@ std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::st
         if(sortedCounts.size() > 1) task->secondaryColor = sortedCounts[1].first;
 
         task->bestFrameIndex = bestFrame;
-        task->isDone = true;
+        
         cap.release();
-    });
+        writer.release();
+        
+        task->filepath = outFilename;
+        task->isDone = true;
+    };
+
+    // Pushiamo il task nella coda
+    {
+        std::unique_lock<std::mutex> lock(queueMutex);
+        taskQueue.push(work);
+    }
+    condition.notify_one(); // Sveglia un worker
+    
     return task;
 }
 
 void AssetManager::initializeAssets() {
-    loadAssetsIntoMemory();
+    std::thread([this]() {
+        loadAssetsIntoMemory();
+        isReady = true;
+    }).detach();
 }
 
 void AssetManager::saveAssetsConfig() {
@@ -376,7 +440,7 @@ void AssetManager::loadAssetsIntoMemory() {
                 }
             }
         }
-        else if (fs::exists(Background::backgroundsPath / key)) value.set_source(VIDEO_LOOP, key);
+        else if (fs::exists("assets/optimized/" + key)) value.set_source(VIDEO_LOOP, key);
         else if (key.rfind("#", 0) == 0) value.set_source(SOLID_COLOR, key);
     }
 
@@ -490,33 +554,38 @@ char AssetManager::displayAndGetKey(const std::string& windowName, const cv::Mat
 std::pair<std::string, std::string> AssetManager::analyzeFramePalette(const cv::Mat& frame) {
     if (frame.empty()) return {"", ""};
 
-    cv::Mat resized;
+    cv::Mat resized, hsvFrame;
     cv::resize(frame, resized, cv::Size(64, 64), 0, 0, cv::INTER_NEAREST);
     if (resized.channels() == 4) cv::cvtColor(resized, resized, cv::COLOR_BGRA2BGR);
     else if (resized.channels() == 1) cv::cvtColor(resized, resized, cv::COLOR_GRAY2BGR);
+    cv::cvtColor(resized, hsvFrame, cv::COLOR_BGR2HSV);
 
-    struct NamedColor { std::string name; cv::Vec3b bgr; };
+    struct NamedColor { std::string name; };
     std::vector<NamedColor> baseColors = {
-        {"Bianco", cv::Vec3b(255, 255, 255)}, {"Nero", cv::Vec3b(0, 0, 0)},
-        {"Rosso", cv::Vec3b(0, 0, 255)}, {"Verde", cv::Vec3b(0, 255, 0)},
-        {"Blu", cv::Vec3b(255, 0, 0)}, {"Viola", cv::Vec3b(128, 0, 128)},
-        {"Giallo", cv::Vec3b(0, 255, 255)}, {"Arancione", cv::Vec3b(0, 165, 255)}
+        {"Bianco"}, {"Nero"}, {"Rosso"}, {"Verde"}, {"Blu"}, {"Viola"}, {"Giallo"}, {"Arancione"}
     };
 
     std::map<std::string, int> counts;
     for (const auto& c : baseColors) counts[c.name] = 0;
 
-    for (int y = 0; y < resized.rows; ++y) {
-        for (int x = 0; x < resized.cols; ++x) {
-            cv::Vec3b pixel = resized.at<cv::Vec3b>(y, x);
-            int minDist = std::numeric_limits<int>::max();
-            std::string closestName = "";
-            for (const auto& bc : baseColors) {
-                int db = pixel[0] - bc.bgr[0], dg = pixel[1] - bc.bgr[1], dr = pixel[2] - bc.bgr[2];
-                int distSq = db*db + dg*dg + dr*dr;
-                if (distSq < minDist) { minDist = distSq; closestName = bc.name; }
+    for (int y = 0; y < hsvFrame.rows; ++y) {
+        for (int x = 0; x < hsvFrame.cols; ++x) {
+            cv::Vec3b pixel = hsvFrame.at<cv::Vec3b>(y, x);
+            int h = pixel[0], s = pixel[1], v = pixel[2];
+            
+            std::string colorName = "";
+            if (v < 40) colorName = "Nero";
+            else if (s < 40 && v > 200) colorName = "Bianco";
+            else {
+                if (h <= 10 || h >= 160) colorName = "Rosso";
+                else if (h >= 11 && h <= 25) colorName = "Arancione";
+                else if (h >= 26 && h <= 35) colorName = "Giallo";
+                else if (h >= 36 && h <= 85) colorName = "Verde";
+                else if (h >= 86 && h <= 130) colorName = "Blu";
+                else if (h >= 131 && h <= 159) colorName = "Viola";
+                else colorName = "Nero"; 
             }
-            counts[closestName]++;
+            if (!colorName.empty()) counts[colorName]++;
         }
     }
 
@@ -533,13 +602,18 @@ std::pair<std::string, std::string> AssetManager::analyzeFramePalette(const cv::
 }
 
 Foreground AssetManager::createTextForeground(const std::string& text, int fontSize) {
-    cv::Mat frame = cv::Mat::zeros(1080, 1920, CV_8UC3);
+    cv::Mat frame = cv::Mat::zeros(1080, 1920, CV_8UC4);
+    
     int baseline = 0;
-    double fontScale = static_cast<double>(fontSize);
-    int thickness = fontSize > 4 ? 4 : 2;
-    cv::Size textSize = cv::getTextSize(text, cv::FONT_HERSHEY_COMPLEX, fontScale, thickness, &baseline);
+    double fontScale = static_cast<double>(fontSize) / 5.0;
+    int thicknessOutline = 8;
+    int thicknessInner = 3;
+    
+    cv::Size textSize = cv::getTextSize(text, cv::FONT_HERSHEY_COMPLEX, fontScale, thicknessOutline, &baseline);
     cv::Point textOrg((frame.cols - textSize.width) / 2, (frame.rows + textSize.height) / 2);
-    cv::putText(frame, text, textOrg, cv::FONT_HERSHEY_COMPLEX, fontScale, cv::Scalar(255, 255, 255), thickness);
+    
+    cv::putText(frame, text, textOrg, cv::FONT_HERSHEY_COMPLEX, fontScale, cv::Scalar(0, 0, 0, 255), thicknessOutline);
+    cv::putText(frame, text, textOrg, cv::FONT_HERSHEY_COMPLEX, fontScale, cv::Scalar(255, 255, 255, 255), thicknessInner);
     
     Foreground fg;
     fg.set_key("TEXT_" + text);

@@ -7,31 +7,20 @@
 #include <atomic>
 #include <thread>
 #include <memory>
+#include <queue>
+#include <mutex>
+#include <condition_variable>
+#include <functional>
 #include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
 #include "ConfigManager.h"
+#include <filesystem>
 
 namespace fs = std::filesystem;
 
-enum EventPhase {
-    AMBIENT,
-    LOW,
-    MID,
-    HIGH
-};
-
-enum SongDynamic {
-    VERSE,
-    BUILD,
-    CHORUS,
-    MANUAL
-};
-
-enum BackgroundType {
-    VIDEO_LOOP,
-    SOLID_COLOR,
-    WINDOW_CAPTURE
-};
+enum EventPhase { AMBIENT, LOW, MID, HIGH };
+enum SongDynamic { VERSE, BUILD, CHORUS, MANUAL };
+enum BackgroundType { VIDEO_LOOP, SOLID_COLOR, WINDOW_CAPTURE };
 
 struct VideoAnalysisTask {
     std::string filepath;
@@ -45,7 +34,6 @@ struct VideoAnalysisTask {
 class Background {
     public:
     static fs::path backgroundsPath;
-
     Background() = default;
     virtual ~Background() = default;
 
@@ -53,23 +41,17 @@ class Background {
     std::string key;
     std::string asset_source; 
     std::vector<int64_t> foregroundColor = {255, 255, 255};
-    
     long long lastVideoFrameTime = 0;
     cv::Mat currentVideoFrame;
-
     BackgroundType type;
     EventPhase eventPhase = AMBIENT;
     SongDynamic songDynamic = VERSE;
     std::string primaryColor = "";
     std::string secondaryColor = "";
     int thumbnailFrameIndex = 0;
-    bool isEnabledGlobal = true;
-
     bool forceNoForeground = false;
-
     cv::VideoCapture video_loop_cap;
     cv::Mat solid_color_img;
-
     int captureWindowId = -1; 
     std::string targetAppName;
     std::string targetWindowName;
@@ -90,18 +72,12 @@ class Background {
 
     const cv::Scalar get_foreground_color() const { 
         if(foregroundColor.size() < 3) return cv::Scalar(255,255,255);
-        int64_t r = foregroundColor[0];
-        int64_t g = foregroundColor[1];
-        int64_t b = foregroundColor[2];
-        return cv::Scalar(b, g, r); 
+        return cv::Scalar(foregroundColor[2], foregroundColor[1], foregroundColor[0]); 
     }
 
     cv::Scalar get_mutable_foreground_color() { 
         if(foregroundColor.size() < 3) return cv::Scalar(255,255,255);
-        int64_t r = foregroundColor[0];
-        int64_t g = foregroundColor[1];
-        int64_t b = foregroundColor[2];
-        return cv::Scalar(b, g, r); 
+        return cv::Scalar(foregroundColor[2], foregroundColor[1], foregroundColor[0]); 
     }
 
     void set_foreground_color(const cv::Scalar & value) { 
@@ -110,6 +86,10 @@ class Background {
 
     const std::optional<cv::Scalar> get_background_color() const;
     const std::optional<std::string> get_background_path() const;
+    
+    std::string get_full_path() const {
+        return "assets/optimized/" + asset_source;
+    }
 
     const cv::Mat get_first_frame();
     const cv::Mat get_solid_color_frame(int width, int height, const cv::Scalar& color) const;
@@ -128,9 +108,6 @@ class Background {
 
     int get_thumbnail_frame_index() const { return thumbnailFrameIndex; }
     void set_thumbnail_frame_index(int index) { this->thumbnailFrameIndex = index; }
-
-    bool get_is_enabled_global() const { return isEnabledGlobal; }
-    void set_is_enabled_global(bool enabled) { this->isEnabledGlobal = enabled; }
 
     const bool& get_force_no_foreground() const { return forceNoForeground; }
     void set_force_no_foreground(bool value) { this->forceNoForeground = value; }
@@ -169,13 +146,10 @@ class Foreground {
     std::string key;
     bool forceOriginalColors = false;
     bool isRamData = false;
-
     std::string primaryColor = "";
     std::string secondaryColor = "";
-    bool isEnabledGlobal = true;
     std::string customText = "";
     int fontSize = 32;
-
     cv::Mat data;
 
     public:
@@ -193,6 +167,10 @@ class Foreground {
     const std::string get_foreground_path() const;
     std::string get_source() const { return asset_source; }
     
+    std::string get_full_path() const {
+        return "assets/foregrounds/" + asset_source;
+    }
+    
     const cv::Mat get_first_frame() const;
 
     const bool& get_force_original_colors() const { return forceOriginalColors; }
@@ -203,9 +181,6 @@ class Foreground {
 
     const std::string& get_secondary_color() const { return secondaryColor; }
     void set_secondary_color(const std::string& color) { this->secondaryColor = color; }
-
-    bool get_is_enabled_global() const { return isEnabledGlobal; }
-    void set_is_enabled_global(bool enabled) { this->isEnabledGlobal = enabled; }
 
     const std::string& get_custom_text() const { return customText; }
     void set_custom_text(const std::string& text) { this->customText = text; }
@@ -233,11 +208,9 @@ class Default {
     public:
     Default() = default;
     virtual ~Default() = default;
-
     private:
     std::string background;
     std::string foreground;
-
     public:
     const std::string & get_background() const { return background; }
     std::string & get_mutable_background() { return background; }
@@ -255,12 +228,10 @@ class AssetsConfig {
     public:
     AssetsConfig() = default;
     virtual ~AssetsConfig() = default;
-
     private:
     std::map<std::string, Background> backgrounds;
     std::map<std::string, Foreground> foregrounds;
     Default default_config;
-    
     public:
     const std::map<std::string, Background> & get_backgrounds() const { return backgrounds; }
     std::map<std::string, Background> & get_mutable_backgrounds() { return backgrounds; }
@@ -279,6 +250,8 @@ class AssetsConfig {
 };
 
 class AssetManager {
+public:
+    std::atomic<bool> isReady{false};
 private:
     const AppConfig& appConfig;
     AssetsConfig assets;
@@ -288,8 +261,14 @@ private:
     std::map<char, cv::Mat> foregroundCache; 
 
     std::vector<std::pair<Background, std::shared_ptr<VideoAnalysisTask>>> stagingBackgrounds;
-    std::vector<Foreground> stagingForegrounds; // Aggiunto per l'area staging dei foreground
-    std::vector<std::thread> analysisThreads;
+    std::vector<Foreground> stagingForegrounds; 
+    
+    // Variabili per il Thread Pool limitato
+    std::vector<std::thread> workerThreads;
+    std::queue<std::function<void()>> taskQueue;
+    std::mutex queueMutex;
+    std::condition_variable condition;
+    bool stopPool{false};
     
 public:
     AssetManager(const AppConfig& config);

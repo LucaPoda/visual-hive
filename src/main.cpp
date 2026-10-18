@@ -40,7 +40,6 @@ std::string getSongDynamicLabel(SongDynamic level) {
 KNNClassifier knnClassifier(21); 
 
 int main() {
-    // Creazione cartella datasets se non esiste
     if (!fs::exists("datasets")) {
         fs::create_directory("datasets");
     }
@@ -54,7 +53,6 @@ int main() {
     
     GraphicsManager graphics(config, targetDisplay);
 
-    // Schermata di caricamento iniziale
     graphics.beginDashboard();
     int display_w, display_h;
     glfwGetFramebufferSize(graphics.getUIWindow(), &display_w, &display_h);
@@ -64,7 +62,7 @@ int main() {
 
     ImGui::SetNextWindowPos(ImVec2(display_w * 0.5f, display_h * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
     ImGui::Begin("Loading", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_AlwaysAutoResize);
-    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "Caricamento Asset in corso...");
+    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "Inizializzazione Sistema...");
     ImGui::End();
 
     ImGui::Render();
@@ -75,7 +73,6 @@ int main() {
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
-    // Carica il dataset di default se esiste
     if (fs::exists("datasets/knn_dataset.csv")) {
         knnClassifier.loadDataset("datasets/knn_dataset.csv");
     }
@@ -102,11 +99,8 @@ int main() {
         {CHORUS, config.debounceChorus}   
     };
 
-    const int REQUIRED_CONSECUTIVE_FRAMES = 5; 
-
     try {
         RuntimeState state(assetManager);
-
         std::cout << "[INFO] System initialized. Starting loop.\n";
 
         while (!graphics.shouldCloseUI()) {
@@ -124,9 +118,9 @@ int main() {
                 pred = knnClassifier.predict(audioData);
                 
                 std::optional<SongDynamic> highConfLabel = std::nullopt;
-                if (pred.confVerse >= 0.90f) highConfLabel = VERSE;
-                else if (pred.confBuild >= 0.90f) highConfLabel = BUILD;
-                else if (pred.confChorus >= 0.90f) highConfLabel = CHORUS;
+                if (pred.confVerse >= 0.80f) highConfLabel = VERSE;
+                else if (pred.confBuild >= 0.80f) highConfLabel = BUILD;
+                else if (pred.confChorus >= 0.80f) highConfLabel = CHORUS;
 
                 if (highConfLabel.has_value()) {
                     if (highConfLabel.value() == candidatePrediction) {
@@ -134,11 +128,14 @@ int main() {
                     } else {
                         candidatePrediction = highConfLabel.value();
                         consecutiveFrames = 1;
+                        stableFramesCount = 0; 
                     }
 
                     int requiredFrames = baseDebounce[candidatePrediction];
                     
-                    if (stableFramesCount > 90) {
+                    if (stableFramesCount > 60) {
+                        requiredFrames = 2; 
+                    } else if (stableFramesCount > 30) {
                         requiredFrames = std::max(3, requiredFrames / 2); 
                     }
 
@@ -165,14 +162,12 @@ int main() {
                         state.currentSongDynamicTarget = stablePrediction;
                         state.triggerAutoSwitch(assetManager.getAssets());
                         beatsSinceLastChange = 0;
-                        
                         consecutiveFrames = 0; 
                     }
                 }
             }
 
             ImGuiIO& io = ImGui::GetIO();
-            
             bool audioActive = (audioData.peak > 0.001f);
             
             if (state.isAutoMode && !audioActive) {
@@ -226,7 +221,6 @@ int main() {
             }
 
             auto now = std::chrono::time_point_cast<std::chrono::microseconds>(std::chrono::steady_clock::now()).time_since_epoch();
-            
             double scale = graphics.calculateBounceScale(state, audioData.isBeat, audioData.bpm, std::chrono::microseconds(now));
 
             cv::Mat outputFrame = graphics.composeFrame(state, assetManager, scale);

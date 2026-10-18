@@ -1,3 +1,4 @@
+// GraphicsManager.cpp
 #include "GraphicsManager.h"
 #include <cmath>
 #include <iostream>
@@ -57,6 +58,7 @@ GraphicsManager::~GraphicsManager() {
     if (liveTextureID != 0) glDeleteTextures(1, &liveTextureID);
     if (cueTextureID != 0) glDeleteTextures(1, &cueTextureID);
     if (projectorTexID != 0) glDeleteTextures(1, &projectorTexID);
+    if (hoverTextureID != 0) glDeleteTextures(1, &hoverTextureID);
     
     for (auto& pair : thumbnailCache) {
         glDeleteTextures(1, &pair.second);
@@ -229,7 +231,6 @@ void GraphicsManager::drawPaletteSquare(const std::string& primary, const std::s
     drawList->AddTriangleFilled(p, ImVec2(p.x + size, p.y), ImVec2(p.x, p.y + size), col1);
     drawList->AddTriangleFilled(ImVec2(p.x + size, p.y), ImVec2(p.x + size, p.y + size), ImVec2(p.x, p.y + size), col2);
     
-    // Draw Border
     drawList->AddRect(p, ImVec2(p.x + size, p.y + size), IM_COL32(200, 200, 200, 255));
     
     ImGui::Dummy(ImVec2(size, size));
@@ -245,9 +246,28 @@ void GraphicsManager::beginDashboard() {
 
 void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr) {
     glfwMakeContextCurrent(uiWindow);
+
+    if (!assetMgr.isReady.load()) {
+        ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+        ImGui::SetNextWindowPos(center, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        ImGui::Begin("LoadingScreen", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_AlwaysAutoResize);
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "Caricamento Asset in corso...");
+        ImGui::End();
+
+        ImGui::Render();
+        int display_w, display_h;
+        glfwGetFramebufferSize(uiWindow, &display_w, &display_h);
+        glViewport(0, 0, display_w, display_h);
+        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+        glfwSwapBuffers(uiWindow);
+        return;
+    }
     
     bool openSettingsModal = false;
     bool openCreateDatasetModal = false;
+    bool isAnyHovered = false;
     
     UpdateGLTexture(liveFrame, liveTextureID);
     UpdateGLTexture(cueFrame, cueTextureID);
@@ -412,11 +432,12 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Separator();
     
     ImGui::Text("Fase Evento:");
-    int ep = static_cast<int>(state.currentEventPhase);
-    if (ImGui::RadioButton("Ambient", &ep, AMBIENT)) state.currentEventPhase = AMBIENT; ImGui::SameLine();
-    if (ImGui::RadioButton("Low", &ep, LOW)) state.currentEventPhase = LOW; ImGui::SameLine();
-    if (ImGui::RadioButton("Mid", &ep, MID)) state.currentEventPhase = MID; ImGui::SameLine();
-    if (ImGui::RadioButton("High", &ep, HIGH)) state.currentEventPhase = HIGH;
+    int ep = state.useAnyEventPhase ? -1 : static_cast<int>(state.currentEventPhase);
+    if (ImGui::RadioButton("Ambient", ep == AMBIENT)) { state.currentEventPhase = AMBIENT; state.useAnyEventPhase = false; } ImGui::SameLine();
+    if (ImGui::RadioButton("Low", ep == LOW)) { state.currentEventPhase = LOW; state.useAnyEventPhase = false; } ImGui::SameLine();
+    if (ImGui::RadioButton("Mid", ep == MID)) { state.currentEventPhase = MID; state.useAnyEventPhase = false; } ImGui::SameLine();
+    if (ImGui::RadioButton("High", ep == HIGH)) { state.currentEventPhase = HIGH; state.useAnyEventPhase = false; } ImGui::SameLine();
+    if (ImGui::RadioButton("ANY", ep == -1)) { state.useAnyEventPhase = true; }
     
     ImGui::RadioButton("COLOR MODE", &state.colorMode, 0); ImGui::SameLine();
     ImGui::RadioButton("PALETTE MODE", &state.colorMode, 1);
@@ -471,7 +492,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
     ImGui::SameLine();
 
-    // Lettura cartella datasets
     static std::vector<std::string> datasetFiles;
     static std::string currentDataset = "knn_dataset.csv";
     static bool needDatasetRefresh = true;
@@ -517,7 +537,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         openCreateDatasetModal = true;
     }
 
-    // Barra Proporzionale Probabilità
     ImGui::Dummy(ImVec2(0, 5));
     struct ConfData { SongDynamic dyn; float val; ImU32 col; const char* name; };
     std::vector<ConfData> confs = {
@@ -594,7 +613,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                     ImGui::Columns(3, "BgCols", true);
                     ImGui::Text("VERSE"); ImGui::NextColumn();
                     ImGui::Text("BUILD"); ImGui::NextColumn();
-                    ImGui::Text("CHORUS"); ImGui::NextColumn();
+                    ImGui::Text("CHORUS & MANUAL"); ImGui::NextColumn();
                     ImGui::Separator();
                     
                     std::map<std::string, std::vector<std::string>> verseMap, buildMap, chorusMap;
@@ -616,9 +635,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                             if (!bg.get_secondary_color().empty()) combinedColor += " - " + bg.get_secondary_color();
                             if (combinedColor.empty()) combinedColor = "Nessuna Palette";
 
-                            if (dyn == VERSE || dyn == MANUAL) verseMap[combinedColor].push_back(key);
+                            if (dyn == VERSE) verseMap[combinedColor].push_back(key);
                             else if (dyn == BUILD) buildMap[combinedColor].push_back(key);
-                            else if (dyn == CHORUS) chorusMap[combinedColor].push_back(key);
+                            else if (dyn == CHORUS || dyn == MANUAL) chorusMap[combinedColor].push_back(key);
                         }
                     }
                     
@@ -628,17 +647,63 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                             int itemCount = 0;
                             for (const auto& key : keys) {
                                 Background& bg = bgs[key];
-                                bool enabled = bg.get_is_enabled_global();
-                                std::string cacheKey = key + (!enabled ? "_gray" : "_color");
+                                std::string cacheKey = key + "_color";
                                 GLuint tex = 0;
                                 auto cacheIt = thumbnailCache.find(cacheKey);
                                 if (cacheIt != thumbnailCache.end()) tex = cacheIt->second;
-                                else tex = getOrCreateThumbnail(key, bg.get_first_frame(), !enabled);
+                                else tex = getOrCreateThumbnail(key, bg.get_first_frame(), false);
                                 
                                 ImGui::PushID(key.c_str());
                                 if (itemCount > 0 && itemCount % 2 != 0) ImGui::SameLine();
+                                
+                                ImVec2 p = ImGui::GetCursorScreenPos();
                                 if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) state.switchCueBackground(bg);
-                                if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) bg.set_is_enabled_global(!enabled);
+                                if (ImGui::IsItemHovered()) {
+                                    isAnyHovered = true;
+                                    std::string fullPath = bg.get_full_path();
+                                    
+                                    if (pendingHoverPath != fullPath) {
+                                        pendingHoverPath = fullPath;
+                                        hoverStartTime = ImGui::GetTime();
+                                    }
+                                    if (ImGui::GetTime() - hoverStartTime > 0.4) {
+                                        ImGui::BeginTooltip();
+                                        if (currentHoverPath != fullPath) {
+                                            hoverCap.release();
+                                            hoverCap.open(fullPath);
+                                            currentHoverPath = fullPath;
+                                            previewTargetFps = hoverCap.get(cv::CAP_PROP_FPS);
+                                            if (previewTargetFps <= 0.0 || std::isnan(previewTargetFps)) {
+                                                previewTargetFps = 30.0;
+                                            }
+                                        }
+                                        if (hoverCap.isOpened()) {
+                                            double currentTime = ImGui::GetTime();
+                                            if (currentTime - lastPreviewFrameTime >= (1.0 / previewTargetFps)) {
+                                                cv::Mat hframe;
+                                                hoverCap >> hframe;
+                                                if (hframe.empty()) {
+                                                    hoverCap.set(cv::CAP_PROP_POS_FRAMES, 0);
+                                                    hoverCap >> hframe;
+                                                }
+                                                if (!hframe.empty()) {
+                                                    UpdateGLTexture(hframe, hoverTextureID);
+                                                }
+                                                lastPreviewFrameTime = currentTime;
+                                            }
+                                            if (hoverTextureID != 0) {
+                                                ImGui::Image((void*)(intptr_t)hoverTextureID, ImVec2(320, 180));
+                                            }
+                                        }
+                                        ImGui::EndTooltip();
+                                    }
+                                }
+                                
+                                if (bg.get_song_dynamic() == MANUAL) {
+                                    ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(p.x, p.y), ImVec2(p.x + 60, p.y + 20), IM_COL32(255, 200, 0, 200));
+                                    ImGui::GetWindowDrawList()->AddText(ImVec2(p.x + 5, p.y + 2), IM_COL32(0, 0, 0, 255), "MANUAL");
+                                }
+
                                 ImGui::PopID();
                                 itemCount++;
                             }
@@ -662,11 +727,11 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::BeginChild("TextGenArea", ImVec2(0, 110), true);
     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "GENERATORE TESTO (LIVE)");
     static char textBuffer[256] = "";
-    static int fontSize = 5;
+    static int textScale = 50; 
     ImGui::InputText("Testo", textBuffer, sizeof(textBuffer));
-    ImGui::SliderInt("Size", &fontSize, 1, 10);
+    ImGui::SliderInt("Scale %", &textScale, 1, 100); 
     if (ImGui::Button("Invia Testo in CUE", ImVec2(-1, 30))) {
-        Foreground textFg = assetMgr.createTextForeground(std::string(textBuffer), fontSize);
+        Foreground textFg = assetMgr.createTextForeground(std::string(textBuffer), textScale);
         state.switchCueForeground(textFg);
     }
     ImGui::EndChild();
@@ -682,8 +747,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     auto& mutableFgs = assetMgr.getMutableAssets().get_mutable_foregrounds();
     int itemCount = 0;
     for (auto& [key, fg] : mutableFgs) {
-        bool enabled = fg.get_is_enabled_global();
-        std::string cacheKey = key + (!enabled ? "_gray" : "_color");
+        std::string cacheKey = key + "_color";
         GLuint tex = 0;
         auto cacheIt = thumbnailCache.find(cacheKey);
         
@@ -691,13 +755,42 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         else {
             cv::Mat firstFrame = fg.get_first_frame();
             if (firstFrame.empty()) continue; 
-            tex = getOrCreateThumbnail(key, firstFrame, !enabled);
+            tex = getOrCreateThumbnail(key, firstFrame, false);
         }
         
         ImGui::PushID(key.c_str());
         if (itemCount > 0 && itemCount % 2 != 0) ImGui::SameLine();
         if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) state.switchCueForeground(fg);
-        if (ImGui::IsItemClicked(ImGuiMouseButton_Right)) fg.set_is_enabled_global(!enabled);
+        if (ImGui::IsItemHovered()) {
+            isAnyHovered = true;
+            std::string fullPath = fg.get_full_path();
+            if (pendingHoverPath != fullPath) {
+                pendingHoverPath = fullPath;
+                hoverStartTime = ImGui::GetTime();
+            }
+            if (ImGui::GetTime() - hoverStartTime > 0.4) {
+                ImGui::BeginTooltip();
+                ImVec2 canvasSize(320, 180);
+                ImVec2 p = ImGui::GetCursorScreenPos();
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                
+                // Disegna sfondo "Schermo"
+                drawList->AddRectFilled(p, ImVec2(p.x + canvasSize.x, p.y + canvasSize.y), IM_COL32(20, 20, 20, 255));
+                
+                if (tex != 0) {
+                    double s = fg.get_scale();
+                    ImVec2 imgSize(canvasSize.x * s, canvasSize.y * s);
+                    ImVec2 center(p.x + canvasSize.x / 2.0f, p.y + canvasSize.y / 2.0f);
+                    
+                    drawList->AddImage((void*)(intptr_t)tex, 
+                        ImVec2(center.x - imgSize.x / 2.0f, center.y - imgSize.y / 2.0f),
+                        ImVec2(center.x + imgSize.x / 2.0f, center.y + imgSize.y / 2.0f));
+                }
+                
+                ImGui::Dummy(canvasSize); 
+                ImGui::EndTooltip();
+            }
+        }
         ImGui::PopID();
         itemCount++;
     }
@@ -706,7 +799,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::EndChild(); 
     ImGui::Columns(1);
     
-    // ================= HELPER DROPDOWN COLORI ================= //
     const char* colorNames[] = {"Nessuno", "Bianco", "Nero", "Rosso", "Verde", "Blu", "Viola", "Giallo", "Arancione"};
     auto renderColorDropdown = [&](const char* label, std::string& currentColor) {
         int currentIdx = 0;
@@ -718,7 +810,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
     };
 
-    // ================= MODALE CREAZIONE DATASET ================= //
     if (openCreateDatasetModal) ImGui::OpenPopup("Create Dataset Preset");
     ImGui::SetNextWindowSizeConstraints(ImVec2(500, 400), ImVec2(FLT_MAX, FLT_MAX));
     if (ImGui::BeginPopupModal("Create Dataset Preset", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
@@ -768,14 +859,14 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         ImGui::Dummy(ImVec2(0, 20));
         if (ImGui::Button("Annulla")) {
             countVerse = countBuild = countChorus = 0;
-            knnClassifier.clearTemporaryDataset(); // Svuota i campioni temporanei registrati per errore
+            knnClassifier.clearTemporaryDataset(); 
             knnClassifier.loadDataset("datasets/" + currentDataset); 
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
         if (ImGui::Button("Salva e Chiudi", ImVec2(150, 0))) {
             std::string destPath = "datasets/" + std::string(newDatasetName) + ".csv";
-            knnClassifier.commitTemporaryDataset(); // Applica i campioni temporanei al dataset principale
+            knnClassifier.commitTemporaryDataset(); 
             knnClassifier.saveDataset(destPath);
             currentDataset = std::string(newDatasetName) + ".csv";
             needDatasetRefresh = true;
@@ -786,7 +877,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     }
 
 
-    // ================= MODALE UNIFICATA IMPOSTAZIONI ================= //
     if (openSettingsModal) {
         ImGui::OpenPopup("Settings");
     }
@@ -796,9 +886,82 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     if (ImGui::BeginPopupModal("Settings", NULL, ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove)) {
         
+        auto handleBgHoverPreview = [&](const std::string& full_path) {
+            if (ImGui::IsItemHovered()) {
+                isAnyHovered = true;
+                if (pendingHoverPath != full_path) {
+                    pendingHoverPath = full_path;
+                    hoverStartTime = ImGui::GetTime();
+                }
+                
+                if (ImGui::GetTime() - hoverStartTime > 0.4) {
+                    ImGui::BeginTooltip();
+                    if (currentHoverPath != full_path) {
+                        hoverCap.release();
+                        hoverCap.open(full_path);
+                        currentHoverPath = full_path;
+                        previewTargetFps = hoverCap.get(cv::CAP_PROP_FPS);
+                        if (previewTargetFps <= 0.0 || std::isnan(previewTargetFps)) {
+                            previewTargetFps = 30.0;
+                        }
+                    }
+                    if (hoverCap.isOpened()) {
+                        double currentTime = ImGui::GetTime();
+                        if (currentTime - lastPreviewFrameTime >= (1.0 / previewTargetFps)) {
+                            cv::Mat frame;
+                            hoverCap >> frame;
+                            if (frame.empty()) {
+                                hoverCap.set(cv::CAP_PROP_POS_FRAMES, 0);
+                                hoverCap >> frame;
+                            }
+                            if (!frame.empty()) {
+                                UpdateGLTexture(frame, hoverTextureID);
+                            }
+                            lastPreviewFrameTime = currentTime;
+                        }
+                        if (hoverTextureID != 0) {
+                            ImGui::Image((void*)(intptr_t)hoverTextureID, ImVec2(320, 180));
+                        }
+                    }
+                    ImGui::EndTooltip();
+                }
+            }
+        };
+
+        auto handleFgHoverPreview = [&](Foreground& fg, GLuint previewTex) {
+            if (ImGui::IsItemHovered()) {
+                isAnyHovered = true;
+                std::string full_path = fg.get_full_path();
+                if (pendingHoverPath != full_path) {
+                    pendingHoverPath = full_path;
+                    hoverStartTime = ImGui::GetTime();
+                }
+                
+                if (ImGui::GetTime() - hoverStartTime > 0.4) {
+                    ImGui::BeginTooltip();
+                    ImVec2 canvasSize(320, 180);
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+                    
+                    drawList->AddRectFilled(p, ImVec2(p.x + canvasSize.x, p.y + canvasSize.y), IM_COL32(20, 20, 20, 255));
+                    
+                    if (previewTex != 0) {
+                        double s = fg.get_scale();
+                        ImVec2 imgSize(canvasSize.x * s, canvasSize.y * s);
+                        ImVec2 center(p.x + canvasSize.x / 2.0f, p.y + canvasSize.y / 2.0f);
+                        
+                        drawList->AddImage((void*)(intptr_t)previewTex, 
+                            ImVec2(center.x - imgSize.x / 2.0f, center.y - imgSize.y / 2.0f),
+                            ImVec2(center.x + imgSize.x / 2.0f, center.y + imgSize.y / 2.0f));
+                    }
+                    ImGui::Dummy(canvasSize);
+                    ImGui::EndTooltip();
+                }
+            }
+        };
+
         if (ImGui::BeginTabBar("SettingsTabs")) {
             
-            // TAB BACKGROUNDS
             ImGuiTabItemFlags bgFlags = (targetSettingsTab == "Backgrounds") ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem("Backgrounds", nullptr, bgFlags)) {
                 if (targetSettingsTab == "Backgrounds") targetSettingsTab = "";
@@ -808,7 +971,8 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                         auto files = openMultipleFilesDialog("Seleziona Video Background", {"mp4", "mov", "avi", "mkv"});
                         for (const auto& file : files) {
                             Background newBg;
-                            newBg.set_source(VIDEO_LOOP, fs::path(file).filename().string()); 
+                            fs::path p(file);
+                            newBg.set_source(VIDEO_LOOP, p.stem().string() + ".avi"); 
                             auto task = assetMgr.analyzeVideoAsync(file);
                             assetMgr.getStagingBackgrounds().push_back({newBg, task});
                         }
@@ -871,7 +1035,10 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                                         GLuint tex = 0;
                                         if (cacheIt != thumbnailCache.end()) tex = cacheIt->second;
                                         else tex = getOrCreateThumbnail(bg.get_source(), bg.get_first_frame(), false);
-                                        if(tex != 0) ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                        if(tex != 0) {
+                                            ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                            handleBgHoverPreview(bg.get_full_path());
+                                        }
                                     }
                                 } else {
                                     ImGui::ProgressBar(task->progress, ImVec2(-1, 0));
@@ -997,7 +1164,10 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                                 GLuint tex = 0;
                                 if (cacheIt != thumbnailCache.end()) tex = cacheIt->second;
                                 else tex = getOrCreateThumbnail(key, bg.get_first_frame(), false);
-                                if(tex != 0) ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                if(tex != 0) {
+                                    ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                    handleBgHoverPreview(bg.get_full_path());
+                                }
                             }
                             
                             ImGui::TableSetColumnIndex(3);
@@ -1059,7 +1229,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 ImGui::EndTabItem();
             }
 
-            // TAB FOREGROUNDS
             ImGuiTabItemFlags fgFlags = (targetSettingsTab == "Foregrounds") ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem("Foregrounds", nullptr, fgFlags)) {
                 if (targetSettingsTab == "Foregrounds") targetSettingsTab = "";
@@ -1068,8 +1237,13 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                     if (ImGui::Button("Importa Foreground")) {
                         auto files = openMultipleFilesDialog("Seleziona Immagine/Video Foreground", {"png", "jpg", "mp4", "mov"});
                         for (const auto& file : files) {
+                            fs::path p(file);
+                            std::string dest = "assets/foregrounds/" + p.filename().string();
+                            try {
+                                fs::copy_file(p, dest, fs::copy_options::overwrite_existing);
+                            } catch (...) {}
                             Foreground newFg;
-                            newFg.set_source(fs::path(file).filename().string()); 
+                            newFg.set_source(p.filename().string()); 
                             assetMgr.getStagingForegrounds().push_back(newFg);
                         }
                     }
@@ -1100,7 +1274,10 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                                 cv::Mat frame = fg.get_first_frame();
                                 if(!frame.empty()) {
                                     GLuint tex = getOrCreateThumbnail(fg.get_source() + "_stage", frame, false);
-                                    if(tex != 0) ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                    if(tex != 0) {
+                                        ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                        handleFgHoverPreview(fg, tex); 
+                                    }
                                 }
                                 
                                 ImGui::TableSetColumnIndex(2);
@@ -1194,7 +1371,10 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                                     tex = getOrCreateThumbnail(key, frame, false);
                                 }
                             }
-                            if(tex != 0) ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                            if(tex != 0) {
+                                ImGui::Image((void*)(intptr_t)tex, ImVec2(80, 45));
+                                handleFgHoverPreview(fg, tex);
+                            }
                             
                             ImGui::TableSetColumnIndex(3);
                             std::string prim = fg.get_primary_color();
@@ -1249,7 +1429,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 ImGui::EndTabItem();
             }
 
-            // TAB LIVE & SYSTEM SETTINGS
             ImGuiTabItemFlags lsFlags = (targetSettingsTab == "Live & System Settings") ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem("Live & System Settings", nullptr, lsFlags)) {
                 if (targetSettingsTab == "Live & System Settings") targetSettingsTab = "";
@@ -1325,7 +1504,13 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             ImGui::EndTabBar();
         }
 
-        // ================= BOTTOM BUTTONS ================= //
+        if (!isAnyHovered) {
+            if (hoverCap.isOpened()) hoverCap.release();
+            currentHoverPath = "";
+            pendingHoverPath = "";
+            hoverStartTime = 0.0;
+        }
+
         ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 250.0f, ImGui::GetWindowHeight() - 40.0f));
         
         if (ImGui::Button("Chiudi", ImVec2(100, 30))) {
@@ -1338,6 +1523,13 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
 
         ImGui::EndPopup();
+    }
+
+    if (!isAnyHovered) {
+        if (hoverCap.isOpened()) hoverCap.release();
+        currentHoverPath = "";
+        pendingHoverPath = "";
+        hoverStartTime = 0.0;
     }
 
     ImGui::End(); 

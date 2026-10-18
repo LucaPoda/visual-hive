@@ -8,7 +8,6 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
     std::ifstream configFile(configFilePath);
     if (!configFile.is_open()) {
         std::cerr << "Error: Could not open config file at " << configFilePath << std::endl;
-        // Set default values if config file is not found
         config.assetsDir = "assets";
         config.keyMappingFile = "config/key_mapping.csv";
         config.assetsConfigFile = "config/assets_config.json";
@@ -16,12 +15,11 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
         config.phraseLength = 4;
         config.default_bpm = 125.0;
         
-        // Fallback per i nuovi parametri
         config.audioSampleRate = 44100;
         config.audioBufferFrames = 512;
-        config.debounceVerse = 25;
-        config.debounceBuild = 15;
-        config.debounceChorus = 6;
+        config.debounceVerse = 12; // Tuning ottimizzato
+        config.debounceBuild = 6;
+        config.debounceChorus = 2;
         config.knnHistorySize = 30;
         config.strobeDurationMs = 50;
         config.knnKNeighbors = 21;
@@ -34,7 +32,6 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
     configFile >> data;
     configFile.close();
 
-    // Parse values from the JSON object
     if (data.count("paths")) {
         config.assetsDir = data["paths"].value("assets_directory", "assets");
         config.keyMappingFile = data["paths"].value("key_mapping_file", "config/key_mapping.csv");
@@ -55,28 +52,26 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
         config.default_bpm = data["ableton_link"].value("default_bpm", 125.0);
     }
 
-    // Lettura dei nuovi parametri (con fallback)
     if (data.count("advanced")) {
         config.audioSampleRate = data["advanced"].value("audioSampleRate", 44100);
         config.audioBufferFrames = data["advanced"].value("audioBufferFrames", 512);
-        config.debounceVerse = data["advanced"].value("debounceVerse", 25);
-        config.debounceBuild = data["advanced"].value("debounceBuild", 15);
-        config.debounceChorus = data["advanced"].value("debounceChorus", 6);
+        config.debounceVerse = data["advanced"].value("debounceVerse", 12);
+        config.debounceBuild = data["advanced"].value("debounceBuild", 6);
+        config.debounceChorus = data["advanced"].value("debounceChorus", 2);
         config.knnHistorySize = data["advanced"].value("knnHistorySize", 30);
         config.strobeDurationMs = data["advanced"].value("strobeDurationMs", 50);
         config.knnKNeighbors = data["advanced"].value("knnKNeighbors", 21);
     } else {
         config.audioSampleRate = data.value("audioSampleRate", 44100);
         config.audioBufferFrames = data.value("audioBufferFrames", 512);
-        config.debounceVerse = data.value("debounceVerse", 25);
-        config.debounceBuild = data.value("debounceBuild", 15);
-        config.debounceChorus = data.value("debounceChorus", 6);
+        config.debounceVerse = data.value("debounceVerse", 12);
+        config.debounceBuild = data.value("debounceBuild", 6);
+        config.debounceChorus = data.value("debounceChorus", 2);
         config.knnHistorySize = data.value("knnHistorySize", 30);
         config.strobeDurationMs = data.value("strobeDurationMs", 50);
         config.knnKNeighbors = data.value("knnKNeighbors", 21);
     }
 
-    // Load the assets configuration
     loadAssetsConfig(config.assetsConfigFile);
 }
 
@@ -94,11 +89,10 @@ void ConfigManager::loadAssetsConfig(const std::string& assetsConfigFilePath) {
     if (data.count("color_mappings")) {
         for (auto& [key, value] : data["color_mappings"].items()) {
             if (value.is_array() && value.size() == 3) {
-                // Read colors as RGB from JSON and convert to BGR for OpenCV
                 int r = value[0].get<int>();
                 int g = value[1].get<int>();
                 int b = value[2].get<int>();
-                config.colorMappings[key] = cv::Scalar(b, g, r); // Store as BGR
+                config.colorMappings[key] = cv::Scalar(b, g, r);
             }
         }
     }
@@ -124,7 +118,6 @@ bool ConfigManager::saveConfig() const {
         configFileIn.close();
     }
 
-    // Aggiornamento struttura JSON
     data["paths"]["assets_directory"] = config.assetsDir;
     data["paths"]["key_mapping_file"] = config.keyMappingFile;
     data["paths"]["assets_config_file"] = config.assetsConfigFile;

@@ -11,6 +11,7 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
       currentSongDynamicTarget(BUILD),
       isBlackout(false),
       currentEventPhase(AMBIENT),
+      useAnyEventPhase(false),
       colorMode(0),
       animationStartTime(0),
       lastFrameTime(0),
@@ -87,25 +88,20 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
 
     for (const auto& [key, bg] : assets.get_backgrounds()) {
         if (bg.get_source() == activeBackground.get_source()) continue;
-        if (!bg.get_is_enabled_global()) continue;
+        if (bg.get_song_dynamic() == MANUAL) continue;
         
-        if (bg.get_event_phase() != currentEventPhase) continue;
+        if (!useAnyEventPhase && bg.get_event_phase() != currentEventPhase) continue;
         if (bg.get_song_dynamic() != currentSongDynamicTarget) continue;
         
-        // Filtro Colore / Palette
         if (!activePalettes.empty()) {
             bool valid = false;
             if (colorMode == 0) { 
-                // COLOR MODE: Se definiti, entrambi i colori dell'asset devono essere spuntati
                 bool primOk = bg.get_primary_color().empty() || std::find(activePalettes.begin(), activePalettes.end(), bg.get_primary_color()) != activePalettes.end();
                 bool secOk = bg.get_secondary_color().empty() || std::find(activePalettes.begin(), activePalettes.end(), bg.get_secondary_color()) != activePalettes.end();
                 
-                // Salta l'asset se non matcha le regole colore (esclude anche quelli senza colori se si cerca un colore specifico)
                 if (bg.get_primary_color().empty() && bg.get_secondary_color().empty()) valid = false;
                 else valid = (primOk && secOk);
-                
             } else { 
-                // PALETTE MODE: L'esatta combinazione "Primario-Secondario" deve essere attiva
                 std::string palKey = bg.get_primary_color() + (bg.get_secondary_color().empty() ? "" : "-" + bg.get_secondary_color());
                 valid = std::find(activePalettes.begin(), activePalettes.end(), palKey) != activePalettes.end();
             }
