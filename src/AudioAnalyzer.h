@@ -60,6 +60,7 @@ public:
     bool start(unsigned int deviceId = 0, unsigned int configSampleRate = 44100, unsigned int configBufferFrames = 512);
     void stop();
     AudioMetrics getMetrics();
+    AudioMetrics getLatestMetrics() const;
 
     std::vector<AudioDeviceInfo> getInputDevices();
     unsigned int getCurrentDeviceId() const { return currentDeviceId; }

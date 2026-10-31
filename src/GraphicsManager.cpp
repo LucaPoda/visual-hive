@@ -311,6 +311,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     bool openCreateDatasetModal = false;
     bool isAnyHovered = false;
     
+    static std::string currentDataset = "new_dataset_14_feature.csv";
+    static bool needDatasetRefresh = true;
+    
     UpdateGLTexture(liveFrame, liveTextureID);
     UpdateGLTexture(cueFrame, cueTextureID);
     
@@ -319,24 +322,748 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     
-    ImVec2 contentAvail = ImGui::GetContentRegionAvail();
-    float topHeight = std::clamp(contentAvail.y * 0.44f, 280.0f, 520.0f);
-    float bottomHeight = contentAvail.y - topHeight - 37.0f;
+    AudioMetrics audioData = audioAnalyzer.getLatestMetrics();
+    bool beatActive = audioData.isBeat || (oscMgr != nullptr && oscMgr->isBeatFlashActive());
+
+    // -------------------------------------------------------------
+    // 1. TOP STATUS BAR (BARRA DI STATO LIVE ORIZZONTALE)
+    // -------------------------------------------------------------
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.07f, 0.09f, 0.12f, 1.0f));
+    ImGui::BeginChild("TopStatusBar", ImVec2(0, 42.0f), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
     
-    ImGui::Text("=== SISTEMA DI REGIA VJ ===");
+    // Logo / Brand
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextColored(ImVec4(0.3f, 0.95f, 1.0f, 1.0f), "VISUAL HIVE");
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Modalità Attiva Badge
+    if (state.isAutoMode) {
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[AUTO MODE]");
+    } else {
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "[MANUALE]");
+    }
+    ImGui::SameLine();
+    
+    // Target Dinamica Rilevata Badge
+    const char* dynStr = (state.currentSongDynamicTarget == VERSE) ? "LOW (VERSE)" :
+                         (state.currentSongDynamicTarget == BUILD) ? "MID (BUILD)" :
+                         (state.currentSongDynamicTarget == CHORUS) ? "HIGH (CHORUS)" : "MANUAL";
+    ImVec4 dynCol = (state.currentSongDynamicTarget == VERSE) ? ImVec4(0.2f, 0.9f, 0.4f, 1.0f) :
+                    (state.currentSongDynamicTarget == BUILD) ? ImVec4(1.0f, 0.7f, 0.1f, 1.0f) :
+                    ImVec4(1.0f, 0.25f, 0.25f, 1.0f);
+    ImGui::TextColored(dynCol, "[%s]", dynStr);
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Master BPM & Beat indicator
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.85f, 1.0f), "%.1f BPM", audioData.bpm);
+    ImGui::SameLine();
+    if (beatActive) {
+        ImGui::TextColored(ImVec4(1.0f, 0.95f, 0.1f, 1.0f), "[* BEAT]");
+    } else {
+        ImGui::TextDisabled("[o BEAT]");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Peak Hold & VU dBFS
+    static float peakHoldL = 0.0f, peakHoldR = 0.0f;
+    static double lastPeakL = ImGui::GetTime();
+    static double lastPeakR = ImGui::GetTime();
+    if (audioData.peakL >= peakHoldL || (ImGui::GetTime() - lastPeakL) > 1.5) {
+        peakHoldL = audioData.peakL; lastPeakL = ImGui::GetTime();
+    }
+    if (audioData.peakR >= peakHoldR || (ImGui::GetTime() - lastPeakR) > 1.5) {
+        peakHoldR = audioData.peakR; lastPeakR = ImGui::GetTime();
+    }
+    float maxPeakLinear = std::max(peakHoldL, peakHoldR);
+    float maxDb = (maxPeakLinear > 0.0001f) ? 20.0f * std::log10(maxPeakLinear) : -60.0f;
+    ImVec4 dbCol = (maxDb >= -0.5f) ? ImVec4(1.0f, 0.2f, 0.2f, 1.0f) : (maxDb > -6.0f) ? ImVec4(1.0f, 0.8f, 0.2f, 1.0f) : ImVec4(0.2f, 1.0f, 0.4f, 1.0f);
+    ImGui::TextColored(dbCol, "VU: %3.0f dBFS", maxDb);
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Proiezione & Monitor Esterno
+    static int monitorCount = 0;
+    static GLFWmonitor** availableMonitors = glfwGetMonitors(&monitorCount);
+    static int currentMonitorIdx = -1;
+    if (currentMonitorIdx == -1 && projectorWindow != nullptr) {
+        int px = 0, py = 0;
+        glfwGetWindowPos(projectorWindow, &px, &py);
+        for (int i = 0; i < monitorCount; ++i) {
+            int mx = 0, my = 0;
+            glfwGetMonitorPos(availableMonitors[i], &mx, &my);
+            if (mx == px && my == py) { currentMonitorIdx = i; break; }
+        }
+    } else if (projectorWindow == nullptr) {
+        currentMonitorIdx = -1;
+    }
+    if (projectorWindow != nullptr && currentMonitorIdx >= 0 && currentMonitorIdx < monitorCount) {
+        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "PROJ: %s", glfwGetMonitorName(availableMonitors[currentMonitorIdx]));
+    } else {
+        ImGui::TextDisabled("PROJ: OFF");
+    }
+    ImGui::SameLine();
+
+    // Blackout alert
+    if (state.isBlackout) {
+        ImGui::TextColored(ImVec4(1.0f, 0.1f, 0.1f, 1.0f), "[BLACKOUT]");
+        ImGui::SameLine();
+    }
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // Registrazione WAV
+    if (audioAnalyzer.isRecordingActive()) {
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "[REC: %s]", audioAnalyzer.getRecordingTimeFormatted().c_str());
+    } else {
+        ImGui::TextDisabled("REC: OFF");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("|");
+    ImGui::SameLine();
+
+    // OSC Status
+    if (oscMgr != nullptr && oscMgr->isEnabled()) {
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "OSC: %s:%d", oscMgr->getTargetIp().c_str(), oscMgr->getTargetPort());
+    } else {
+        ImGui::TextDisabled("OSC: OFF");
+    }
+
+    // Quick Action Buttons aligned to the right
+    float quickBtnsW = 310.0f;
+    float currentBarW = ImGui::GetWindowWidth();
+    if (currentBarW > quickBtnsW + 420.0f) {
+        ImGui::SameLine(currentBarW - quickBtnsW);
+    } else {
+        ImGui::SameLine();
+    }
+
+    if (state.isBlackout) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
+        if (ImGui::Button("BLACKOUT", ImVec2(80, 24))) { state.isBlackout = false; }
+        ImGui::PopStyleColor();
+    } else {
+        if (ImGui::Button("BLACKOUT", ImVec2(80, 24))) { state.isBlackout = true; }
+    }
+    ImGui::SameLine();
+
+    if (ImGui::Button(state.isAutoMode ? "MANUALE" : "AUTO", ImVec2(80, 24))) {
+        if (!state.isAutoMode) {
+            state.activateAutoModeImmediate(assetMgr.getAssets());
+        } else {
+            state.isAutoMode = false;
+        }
+    }
+    ImGui::SameLine();
+
+    if (ImGui::Button("SETTINGS", ImVec2(90, 24))) {
+        targetSettingsTab = "Live & System Settings";
+        openSettingsModal = true;
+    }
+
+    ImGui::EndChild();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+
     ImGui::Separator();
+
+    ImVec2 contentAvail = ImGui::GetContentRegionAvail();
+    float sidebarWidth = 420.0f;
+    float remainingHeight = contentAvail.y;
+
+    // -------------------------------------------------------------
+    // 2. LEFT SIDEBAR (TABBED SETTINGS & CONTROLS)
+    // -------------------------------------------------------------
+    ImGui::BeginChild("LeftSidebar", ImVec2(sidebarWidth, remainingHeight), true);
+    if (ImGui::BeginTabBar("LeftSidebarTabs", ImGuiTabBarFlags_None)) {
+        
+        // =========================================================
+        // TAB 1: I/O SETTINGS
+        // =========================================================
+        if (ImGui::BeginTabItem("I/O Settings")) {
+            ImGui::Spacing();
+            
+            // --- OUTPUT & PROIEZIONE ---
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "OUTPUT & PROIEZIONE");
+            ImGui::Separator();
+            
+            std::string monitorPreviewText = (currentMonitorIdx >= 0 && currentMonitorIdx < monitorCount) 
+                                              ? glfwGetMonitorName(availableMonitors[currentMonitorIdx]) 
+                                              : "Seleziona Monitor...";
+            
+            ImGui::SetNextItemWidth(200.0f);
+            if (ImGui::BeginCombo("##MonitorOutput", monitorPreviewText.c_str())) {
+                for (int i = 0; i < monitorCount; ++i) {
+                    bool isSelected = (currentMonitorIdx == i);
+                    if (ImGui::Selectable(glfwGetMonitorName(availableMonitors[i]), isSelected)) {
+                        currentMonitorIdx = i;
+                        createProjectorWindow(i);
+                    }
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Refresh##Monitors")) {
+                availableMonitors = glfwGetMonitors(&monitorCount);
+            }
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
+            ImGui::Checkbox("BLACKOUT", &state.isBlackout);
+            ImGui::PopStyleColor();
+            
+            ImGui::Spacing();
+            ImGui::Separator();
+            
+            // --- AUDIO INPUT & MONITORING ---
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO INPUT & MONITORING");
+            ImGui::Separator();
+            
+            static std::vector<AudioDeviceInfo> audioDevices = audioAnalyzer.getInputDevices();
+            static std::string currentDeviceName = "Seleziona Dispositivo...";
+            if (currentDeviceName == "Seleziona Dispositivo..." && !audioDevices.empty()) {
+                unsigned int activeId = audioAnalyzer.getCurrentDeviceId();
+                for (const auto& dev : audioDevices) {
+                    if (dev.id == activeId) currentDeviceName = dev.name;
+                }
+            }
+            
+            ImGui::SetNextItemWidth(220.0f);
+            if (ImGui::BeginCombo("##AudioInterface", currentDeviceName.c_str())) {
+                for (const auto& device : audioDevices) {
+                    bool isSelected = (currentDeviceName == device.name);
+                    if (ImGui::Selectable(device.name.c_str(), isSelected)) {
+                        currentDeviceName = device.name;
+                        if (audioAnalyzer.isRecordingActive()) {
+                            audioAnalyzer.stopRecording();
+                        }
+                        audioAnalyzer.stop();
+                        audioAnalyzer.start(device.id);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Refresh##Audio")) audioDevices = audioAnalyzer.getInputDevices();
+
+            // VU Meter Stereo
+            auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
+                float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
+                float holdDb = (linearHold > 0.0001f) ? 20.0f * std::log10(linearHold) : -60.0f;
+                float fraction = std::clamp((db + 48.0f) / 48.0f, 0.0f, 1.0f);
+                float holdFraction = std::clamp((holdDb + 48.0f) / 48.0f, 0.0f, 1.0f);
+                ImVec4 color = (db >= -0.1f) ? ImVec4(1.0f, 0.1f, 0.1f, 1.0f) : (db > -6.0f) ? ImVec4(1.0f, 0.8f, 0.1f, 1.0f) : ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                
+                ImGui::Text("%s", label); ImGui::SameLine(25.0f);
+                ImVec2 pos = ImGui::GetCursorScreenPos();
+                ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x - 65.0f, 10.0f);
+                ImDrawList* drawList = ImGui::GetWindowDrawList();
+                drawList->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(40, 40, 40, 255));
+                drawList->AddRectFilled(pos, ImVec2(pos.x + size.x * fraction, pos.y + size.y), ImGui::ColorConvertFloat4ToU32(color));
+                if (holdFraction > 0.0f) {
+                    float hx = pos.x + size.x * holdFraction;
+                    drawList->AddLine(ImVec2(hx, pos.y), ImVec2(hx, pos.y + size.y), IM_COL32(255, 255, 255, 255), 2.0f);
+                }
+                ImGui::Dummy(size);
+                ImGui::SameLine();
+                ImGui::TextColored(color, "%3.0f dB", db);
+            };
+
+            drawDbMeter("L", audioData.peakL, peakHoldL);
+            drawDbMeter("R", audioData.peakR, peakHoldR);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- REGISTRAZIONE AUDIO (WAV) ---
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "REGISTRAZIONE AUDIO (WAV 44.1kHz)");
+            ImGui::Separator();
+            if (!audioAnalyzer.isRecordingActive()) {
+                if (ImGui::Button("Inizia Registrazione", ImVec2(150, 26))) {
+                    auto t = std::time(nullptr);
+                    auto tm = *std::localtime(&t);
+                    char timeBuf[64];
+                    std::strftime(timeBuf, sizeof(timeBuf), "rec_%Y%m%d_%H%M%S", &tm);
+                    audioAnalyzer.startRecording(timeBuf);
+                }
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
+                if (ImGui::Button("Stop Registrazione", ImVec2(150, 26))) {
+                    audioAnalyzer.stopRecording();
+                }
+                ImGui::PopStyleColor();
+                ImGui::SameLine();
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Rec: %s", audioAnalyzer.getRecordingTimeFormatted().c_str());
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Apri Cartella##Rec", ImVec2(100, 26))) {
+                #ifdef __APPLE__
+                system("open recordings/");
+                #endif
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- TRASMISSIONE OSC / QLC+ ---
+            if (oscMgr != nullptr) {
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "TRASMISSIONE OSC / QLC+ (SINCRONIZZAZIONE LUCI)");
+                ImGui::Separator();
+                if (oscMgr->isEnabled()) {
+                    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ATTIVO -> %s:%d]", oscMgr->getTargetIp().c_str(), oscMgr->getTargetPort());
+                } else {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[DISABILITATO]");
+                }
+                ImGui::SameLine();
+                ImGui::TextDisabled("| Pkt: %llu", (unsigned long long)oscMgr->getPacketsSent());
+
+                static char oscIpBuf[64] = "";
+                static int oscPortBuf = 7700;
+                static char oscBpmAddrBuf[64] = "";
+                static char oscTapAddrBuf[64] = "";
+                static bool oscInitialized = false;
+
+                if (!oscInitialized) {
+                    std::strncpy(oscIpBuf, oscMgr->getTargetIp().c_str(), sizeof(oscIpBuf) - 1);
+                    oscPortBuf = oscMgr->getTargetPort();
+                    std::strncpy(oscBpmAddrBuf, oscMgr->getBpmAddress().c_str(), sizeof(oscBpmAddrBuf) - 1);
+                    std::strncpy(oscTapAddrBuf, oscMgr->getTapAddress().c_str(), sizeof(oscTapAddrBuf) - 1);
+                    oscInitialized = true;
+                }
+
+                bool isOscEnabled = oscMgr->isEnabled();
+                if (ImGui::Checkbox("Abilita OSC", &isOscEnabled)) {
+                    oscMgr->setEnabled(isOscEnabled);
+                }
+                ImGui::SameLine();
+                bool sendBeatTap = oscMgr->isSendTapOnBeat();
+                if (ImGui::Checkbox("Invia TAP su Beat", &sendBeatTap)) {
+                    oscMgr->setSendTapOnBeat(sendBeatTap);
+                }
+
+                ImGui::SetNextItemWidth(130.0f);
+                if (ImGui::InputText("IP Target", oscIpBuf, sizeof(oscIpBuf))) {
+                    oscMgr->updateTarget(oscIpBuf, oscPortBuf);
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f);
+                if (ImGui::InputInt("Porta", &oscPortBuf, 0)) {
+                    oscMgr->updateTarget(oscIpBuf, oscPortBuf);
+                }
+
+                ImGui::SetNextItemWidth(130.0f);
+                if (ImGui::InputText("Path BPM", oscBpmAddrBuf, sizeof(oscBpmAddrBuf))) {
+                    oscMgr->updateAddresses(oscBpmAddrBuf, oscTapAddrBuf);
+                }
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(130.0f);
+                if (ImGui::InputText("Path TAP", oscTapAddrBuf, sizeof(oscTapAddrBuf))) {
+                    oscMgr->updateAddresses(oscBpmAddrBuf, oscTapAddrBuf);
+                }
+
+                if (ImGui::Button("Test BPM", ImVec2(80, 24))) {
+                    oscMgr->triggerManualBpm(audioData.bpm > 30.0f ? audioData.bpm : 120.0f);
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invia il valore BPM a QLC+ (Auto-Detect)");
+                ImGui::SameLine();
+                if (ImGui::Button("Test TAP (Speed Dial)", ImVec2(145, 24))) {
+                    oscMgr->triggerManualTap();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invia un segnale TAP (1.0 -> 0.0) per mappare 'Auto Detect' su Speed Dial in QLC+");
+                
+                if (configMgr != nullptr) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Salva OSC", ImVec2(75, 24))) {
+                        configMgr->saveOscConfig(oscMgr->isEnabled(), oscIpBuf, oscPortBuf, oscBpmAddrBuf, oscTapAddrBuf, oscMgr->isSendTapOnBeat(), oscMgr->getPulseDurationMs());
+                        LOG_INFO("ConfigManager", "Configurazione OSC salvata con successo in config.json");
+                    }
+                }
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- CALIBRAZIONE BPM: REGRESSIONE LINEARE ---
+            ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "CALIBRAZIONE BPM: REGRESSIONE LINEARE");
+            ImGui::Separator();
+            
+            float raw = audioAnalyzer.getRawBpm();
+            float slope = audioAnalyzer.getBpmSlope();
+            float intercept = audioAnalyzer.getBpmIntercept();
+            ImGui::Text("Formula: BPM = %.4f * Raw %+.2f", slope, intercept);
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Raw: %.1f -> Calibrato: %.1f  [<110: x2]", raw, audioData.bpm);
+            
+            auto pts = audioAnalyzer.getCalibrationPoints();
+            if (ImGui::BeginChild("PointsTable", ImVec2(0, 115), true)) {
+                if (pts.empty()) {
+                    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Nessun punto inserito (m=1.0, q=0.0).");
+                } else {
+                    ImGui::Columns(4, "CalibCols", false);
+                    ImGui::SetColumnWidth(0, 45);
+                    ImGui::SetColumnWidth(1, 105);
+                    ImGui::SetColumnWidth(2, 105);
+                    ImGui::Text("#"); ImGui::NextColumn();
+                    ImGui::Text("Raw"); ImGui::NextColumn();
+                    ImGui::Text("Reale"); ImGui::NextColumn();
+                    ImGui::Text("Azione"); ImGui::NextColumn();
+                    ImGui::Separator();
+                    
+                    int toDelete = -1;
+                    for (size_t i = 0; i < pts.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i));
+                        ImGui::Text("%zu", i + 1); ImGui::NextColumn();
+                        ImGui::Text("%.1f", pts[i].raw); ImGui::NextColumn();
+                        ImGui::Text("%.1f", pts[i].actual); ImGui::NextColumn();
+                        if (ImGui::SmallButton("Elimina")) {
+                            toDelete = static_cast<int>(i);
+                        }
+                        ImGui::NextColumn();
+                        ImGui::PopID();
+                    }
+                    ImGui::Columns(1);
+                    if (toDelete >= 0) {
+                        audioAnalyzer.removeCalibrationPoint(toDelete);
+                        LOG_INFO("AudioAnalyzer", "Rimosso punto calibrazione #" + std::to_string(toDelete + 1));
+                    }
+                }
+            }
+            ImGui::EndChild();
+
+            static float newRaw = 120.0f;
+            static float newActual = 123.0f;
+            ImGui::SetNextItemWidth(65.0f);
+            ImGui::InputFloat("##NewRaw", &newRaw, 0.5f, 1.0f, "%.1f");
+            ImGui::SameLine();
+            if (ImGui::Button("Raw")) { if (raw > 30.0f) newRaw = raw; }
+            ImGui::SameLine();
+            ImGui::Text("->");
+            ImGui::SameLine();
+            ImGui::SetNextItemWidth(65.0f);
+            ImGui::InputFloat("##NewActual", &newActual, 0.5f, 1.0f, "%.1f");
+            ImGui::SameLine();
+            if (ImGui::Button("TAP")) {
+                static double lastTapTime = 0.0;
+                static std::vector<double> tapIntervals;
+                double nowTap = ImGui::GetTime();
+                if (lastTapTime > 0.0) {
+                    double diff = nowTap - lastTapTime;
+                    if (diff >= 0.25 && diff <= 2.0) {
+                        tapIntervals.push_back(diff);
+                        if (tapIntervals.size() > 5) tapIntervals.erase(tapIntervals.begin());
+                        double avgDiff = 0.0;
+                        for (double d : tapIntervals) avgDiff += d;
+                        avgDiff /= tapIntervals.size();
+                        newActual = static_cast<float>(std::round(60.0 / avgDiff));
+                    } else { tapIntervals.clear(); }
+                }
+                lastTapTime = nowTap;
+            }
+
+            if (ImGui::Button("+ Aggiungi", ImVec2(80, 24))) {
+                if (newRaw > 30.0f && newActual > 30.0f) {
+                    audioAnalyzer.addCalibrationPoint(newRaw, newActual);
+                    LOG_INFO("AudioAnalyzer", "Aggiunto punto: Raw=" + std::to_string(newRaw) + " -> Actual=" + std::to_string(newActual));
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Reset Punti", ImVec2(85, 24))) {
+                audioAnalyzer.clearCalibrationPoints();
+                LOG_INFO("AudioAnalyzer", "Azzerati punti calibrazione BPM.");
+            }
+            if (configMgr != nullptr) {
+                ImGui::SameLine();
+                if (ImGui::Button("Salva in config", ImVec2(105, 24))) {
+                    auto currentPts = audioAnalyzer.getCalibrationPoints();
+                    std::vector<AppConfig::BpmCalibrationPoint> cfgPts;
+                    for (const auto& p : currentPts) { cfgPts.push_back({p.raw, p.actual}); }
+                    configMgr->saveBpmCalibration(audioAnalyzer.getBpmSlope(), audioAnalyzer.getBpmIntercept(), cfgPts);
+                    LOG_INFO("ConfigManager", "Calibrazione BPM salvata con successo in config.json");
+                }
+            }
+
+            ImGui::EndTabItem();
+        }
+
+        // =========================================================
+        // TAB 2: AUTO MODE & LIVE
+        // =========================================================
+        if (ImGui::BeginTabItem("Auto Mode & Live")) {
+            ImGui::Spacing();
+
+            // --- CONTROLLO MODALITÀ ---
+            ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.6f, 1.0f), "MODALITÀ DI CONTROLLO");
+            ImGui::Separator();
+            
+            bool autoModeVal = state.isAutoMode;
+            if (ImGui::Checkbox("AUTO MODE ATTIVA (M)", &autoModeVal)) {
+                if (autoModeVal) {
+                    state.activateAutoModeImmediate(assetMgr.getAssets());
+                    LOG_INFO("UI", "Auto Mode attivata da UI: cambio immediato eseguito.");
+                } else {
+                    state.isAutoMode = false;
+                    LOG_INFO("UI", "Auto Mode disattivata da UI.");
+                }
+            }
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, state.showReasoningWindow ? ImVec4(0.2f, 0.6f, 0.8f, 1.0f) : ImVec4(0.2f, 0.3f, 0.4f, 1.0f));
+            if (ImGui::Button("AI Reasoning", ImVec2(115, 0))) {
+                state.showReasoningWindow = !state.showReasoningWindow;
+            }
+            ImGui::PopStyleColor();
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- FASE EVENTO & INTENSITÀ ---
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "FASE EVENTO & INTENSITÀ LIVE");
+            ImGui::Separator();
+
+            int ep = state.useAnyEventPhase ? -1 : static_cast<int>(state.currentEventPhase);
+            if (ImGui::RadioButton("Ambient", ep == AMBIENT)) { state.currentEventPhase = AMBIENT; state.useAnyEventPhase = false; } ImGui::SameLine();
+            if (ImGui::RadioButton("Low", ep == LOW)) { state.currentEventPhase = LOW; state.useAnyEventPhase = false; } ImGui::SameLine();
+            if (ImGui::RadioButton("Mid", ep == MID)) { state.currentEventPhase = MID; state.useAnyEventPhase = false; } ImGui::SameLine();
+            if (ImGui::RadioButton("High", ep == HIGH)) { state.currentEventPhase = HIGH; state.useAnyEventPhase = false; } ImGui::SameLine();
+            if (ImGui::RadioButton("ANY", ep == -1)) { state.useAnyEventPhase = true; }
+
+            ImGui::Spacing();
+            // Barra proporzionale Low / Mid / High
+            float sLow = state.smoothedScores[0];
+            float sMid = state.smoothedScores[1];
+            float sHigh = state.smoothedScores[2];
+            float sTot = sLow + sMid + sHigh;
+            if (sTot < 0.0001f) sTot = 1.0f;
+
+            ImVec2 barPos = ImGui::GetCursorScreenPos();
+            float barWidth = ImGui::GetContentRegionAvail().x;
+            float barHeight = 16.0f;
+            float currentX = barPos.x;
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+            auto drawSegment = [&](float val, ImU32 col) {
+                float w = barWidth * (val / sTot);
+                if (w > 0) {
+                    drawList->AddRectFilled(ImVec2(currentX, barPos.y), ImVec2(currentX + w, barPos.y + barHeight), col);
+                    currentX += w;
+                }
+            };
+            drawSegment(sLow, IM_COL32(40, 180, 80, 255));   
+            drawSegment(sMid, IM_COL32(240, 160, 20, 255));  
+            drawSegment(sHigh, IM_COL32(220, 40, 40, 255));  
+            ImGui::Dummy(ImVec2(barWidth, barHeight));
+
+            auto getDynName = [](SongDynamic d) -> const char* {
+                if (d == VERSE) return "LOW";
+                if (d == BUILD) return "MID";
+                if (d == CHORUS) return "HIGH";
+                return "MANUAL";
+            };
+            int displayBeats = static_cast<int>(state.masterPhraseBeats);
+            ImGui::Text("Master Grid Phrase: %d / 32", displayBeats);
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "| Target: [%s]", getDynName(state.currentSongDynamicTarget));
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- GESTIONE COLORI & PALETTE ---
+            ImGui::TextColored(ImVec4(0.9f, 0.5f, 1.0f, 1.0f), "GESTIONE COLORI & PALETTE");
+            ImGui::Separator();
+            ImGui::RadioButton("COLOR MODE", &state.colorMode, 0); ImGui::SameLine();
+            ImGui::RadioButton("PALETTE MODE", &state.colorMode, 1);
+
+            if (state.colorMode == 0) {
+                ImGui::Text("Colori Attivi:");
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Tutti##Colors")) {
+                    state.activeColors = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Nessuno##Colors")) {
+                    state.activeColors.clear();
+                }
+
+                const char* colorKeys[] = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
+                const char* colorLabels[] = {"Bianco", "Rosso", "Verde", "Blu", "Ciano", "Magenta", "Giallo", "Arancione", "Nero"};
+                for (int i = 0; i < 9; i++) {
+                    bool active = std::find(state.activeColors.begin(), state.activeColors.end(), colorKeys[i]) != state.activeColors.end();
+                    if (ImGui::Checkbox(colorLabels[i], &active)) {
+                        if (active) state.activeColors.push_back(colorKeys[i]);
+                        else state.activeColors.erase(std::remove(state.activeColors.begin(), state.activeColors.end(), colorKeys[i]), state.activeColors.end());
+                    }
+                    if ((i + 1) % 3 != 0) ImGui::SameLine();
+                }
+                if (9 % 3 != 0) ImGui::NewLine();
+            } else {
+                ImGui::Text("Palette Attive:");
+                ImGui::SameLine();
+                std::set<std::pair<std::string, std::string>> uniquePalettes;
+                bool hasNoPaletteVisuals = false;
+                for (auto& [key, bg] : assetMgr.getMutableAssets().get_backgrounds()) {
+                    std::string prim = ColorUtils::normalizeColorName(bg.get_primary_color());
+                    std::string sec = ColorUtils::normalizeColorName(bg.get_secondary_color());
+                    if (!prim.empty()) {
+                        uniquePalettes.insert({prim, sec});
+                    } else {
+                        hasNoPaletteVisuals = true;
+                    }
+                }
+
+                if (ImGui::SmallButton("Tutte##Palettes")) {
+                    state.activePalettes.clear();
+                    if (hasNoPaletteVisuals) state.activePalettes.push_back("Nessuna Palette");
+                    for (const auto& pal : uniquePalettes) {
+                        state.activePalettes.push_back(pal.first + (pal.second.empty() ? "" : "-" + pal.second));
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Nessuna##Palettes")) {
+                    state.activePalettes.clear();
+                }
+
+                int count = 0;
+                if (hasNoPaletteVisuals) {
+                    std::string noPalKey = "Nessuna Palette";
+                    bool isActive = std::find(state.activePalettes.begin(), state.activePalettes.end(), noPalKey) != state.activePalettes.end();
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    drawPaletteSquare("", "", 30.0f);
+                    if (isActive) {
+                        ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.5f);
+                    }
+                    ImGui::SetCursorScreenPos(p);
+                    if (ImGui::InvisibleButton("##no_pal", ImVec2(30.0f, 30.0f))) {
+                        if (isActive) state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), noPalKey), state.activePalettes.end());
+                        else state.activePalettes.push_back(noPalKey);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nessuna Palette (Visual Neutri)");
+                    count++;
+                    ImGui::SameLine();
+                }
+
+                for (const auto& pal : uniquePalettes) {
+                    std::string palKey = pal.first + (pal.second.empty() ? "" : "-" + pal.second);
+                    bool isActive = std::find(state.activePalettes.begin(), state.activePalettes.end(), palKey) != state.activePalettes.end();
+                    ImVec2 p = ImGui::GetCursorScreenPos();
+                    drawPaletteSquare(pal.first, pal.second, 30.0f);
+                    if (isActive) {
+                        ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.5f);
+                    }
+                    ImGui::SetCursorScreenPos(p);
+                    if (ImGui::InvisibleButton(palKey.c_str(), ImVec2(30.0f, 30.0f))) {
+                        if (isActive) state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), palKey), state.activePalettes.end());
+                        else state.activePalettes.push_back(palKey);
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", palKey.c_str());
+                    if ((count + 1) % 5 != 0) ImGui::SameLine();
+                    count++;
+                }
+                if (count % 5 != 0) ImGui::NewLine();
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- AI KNN & DATASET ---
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.8f, 1.0f), "AI KNN MODEL & DATASET");
+            ImGui::Separator();
+
+            static std::vector<std::string> datasetFiles;
+            if (needDatasetRefresh) {
+                datasetFiles.clear();
+                if (fs::exists("datasets")) {
+                    for (const auto& entry : fs::directory_iterator("datasets")) {
+                        if (entry.path().extension() == ".csv") {
+                            datasetFiles.push_back(entry.path().filename().string());
+                        }
+                    }
+                }
+                if (!fs::exists("datasets/" + currentDataset)) {
+                    if (fs::exists("datasets/knn_dataset.csv")) {
+                        currentDataset = "knn_dataset.csv";
+                    } else if (!datasetFiles.empty()) {
+                        currentDataset = datasetFiles[0];
+                    }
+                }
+                needDatasetRefresh = false;
+            }
+
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::BeginCombo("##DatasetCombo", currentDataset.c_str())) {
+                for (const auto& ds : datasetFiles) {
+                    bool isSelected = (currentDataset == ds);
+                    if (ImGui::Selectable(ds.c_str(), isSelected)) {
+                        currentDataset = ds;
+                        knnClassifier.loadDataset("datasets/" + currentDataset);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Import")) {
+                auto files = openMultipleFilesDialog("Seleziona CSV Dataset", {"csv"});
+                for (const auto& file : files) {
+                    fs::path src(file);
+                    fs::path dest = fs::path("datasets") / src.filename();
+                    try {
+                        fs::copy_file(src, dest, fs::copy_options::overwrite_existing);
+                        needDatasetRefresh = true;
+                        currentDataset = dest.filename().string();
+                        knnClassifier.loadDataset(dest.string());
+                    } catch (...) {}
+                }
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Create")) openCreateDatasetModal = true;
+
+            ImGui::Spacing();
+            ImGui::Separator();
+
+            // --- EFFETTO STROBO LIVE ---
+            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.2f, 1.0f), "EFFETTO STROBO LIVE");
+            ImGui::Separator();
+            
+            ImGui::PushStyleColor(ImGuiCol_Button, isGuiStrobeActive ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, isGuiStrobeActive ? ImVec4(0.0f, 0.0f, 0.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+            ImGui::Button("STROBE (FLASH)", ImVec2(160, 30));
+            isGuiStrobeActive = ImGui::IsItemActive();
+            ImGui::PopStyleColor(2);
+            ImGui::SameLine();
+            ImGui::TextDisabled("(Hold / Spazio)");
+
+            ImGui::SetNextItemWidth(160.0f);
+            ImGui::SliderInt("Durata (ms)", &strobeDurationMs, 10, 300);
+
+            ImGui::EndTabItem();
+        }
+
+        ImGui::EndTabBar();
+    }
+    ImGui::EndChild(); // LeftSidebar
+
+    ImGui::SameLine();
+
+    // -------------------------------------------------------------
+    // 3. RIGHT WORKSPACE (PREVIEWS & DECKS)
+    // -------------------------------------------------------------
+    ImGui::BeginChild("RightWorkspace", ImVec2(0, remainingHeight), false);
     
-    ImGui::BeginChild("TopArea", ImVec2(0, topHeight), false);
-    ImGui::Columns(2, "TopColumns", false);
-    ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.68f);
-    
-    ImGui::BeginChild("PreviewsArea", ImVec2(0, 0), true);
+    float rwHeight = ImGui::GetContentRegionAvail().y;
+    float previewAreaHeight = std::clamp(rwHeight * 0.44f, 260.0f, 480.0f);
+    float decksAreaHeight = rwHeight - previewAreaHeight - 10.0f;
+
+    // --- PREVIEWS AREA ---
+    ImGui::BeginChild("PreviewsArea", ImVec2(0, previewAreaHeight), true);
     
     float availWidth = ImGui::GetContentRegionAvail().x;
     float availHeight = ImGui::GetContentRegionAvail().y;
-    // Calcolo reattivo che rispetta rigorosamente il formato 16:9 senza overflow verticale
     float maxPreviewW = (availWidth - 16.0f) / 2.0f;
-    float maxPreviewH = std::max(60.0f, availHeight - 75.0f);
+    float maxPreviewH = std::max(60.0f, availHeight - 55.0f);
     
     float previewWidth = maxPreviewW;
     float previewHeight = previewWidth * (9.0f / 16.0f);
@@ -352,12 +1079,12 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::NextColumn();
     
-    ImGui::TextColored(ImVec4(1.0f, 0.0f, 0.0f, 1.0f), "LIVE (ON AIR)");
+    ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "LIVE (ON AIR)");
     if (liveTextureID != 0) ImGui::Image((void*)(intptr_t)liveTextureID, ImVec2(previewWidth, previewHeight));
     
     ImGui::Columns(1);
     
-    ImGui::Dummy(ImVec2(0, 8));
+    ImGui::Spacing();
     float btnWidth = (ImGui::GetContentRegionAvail().x - 10.0f) * 0.5f;
     if (ImGui::Button("Transizione CUE -> LIVE (INVIO)", ImVec2(btnWidth, 30))) {
         state.transitionCueToLive();
@@ -367,654 +1094,12 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         state.applyCueForegroundToLive();
     }
     
-    ImGui::EndChild();
-    
-    ImGui::NextColumn();
-    
-    AudioMetrics audioData = audioAnalyzer.getMetrics();
-    
-    ImGui::BeginChild("MonitoringAuto", ImVec2(0, 0), true);
-    
-    ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.5f, 1.0f), "OUTPUT & PROIEZIONE");
-    ImGui::Separator();
-    
-    static int monitorCount = 0;
-    static GLFWmonitor** availableMonitors = glfwGetMonitors(&monitorCount);
-    static int currentMonitorIdx = -1;
-    
-    if (currentMonitorIdx == -1 && projectorWindow != nullptr) {
-        int px = 0, py = 0;
-        glfwGetWindowPos(projectorWindow, &px, &py);
-        for (int i = 0; i < monitorCount; ++i) {
-            int mx = 0, my = 0;
-            glfwGetMonitorPos(availableMonitors[i], &mx, &my);
-            if (mx == px && my == py) {
-                currentMonitorIdx = i;
-                break;
-            }
-        }
-    } else if (projectorWindow == nullptr) {
-        currentMonitorIdx = -1;
-    }
-    
-    std::string monitorPreviewText = (currentMonitorIdx >= 0 && currentMonitorIdx < monitorCount) 
-                                      ? glfwGetMonitorName(availableMonitors[currentMonitorIdx]) 
-                                      : "Seleziona Monitor...";
-    
-    ImGui::SetNextItemWidth(180.0f);
-    if (ImGui::BeginCombo("##MonitorOutput", monitorPreviewText.c_str())) {
-        for (int i = 0; i < monitorCount; ++i) {
-            bool isSelected = (currentMonitorIdx == i);
-            if (ImGui::Selectable(glfwGetMonitorName(availableMonitors[i]), isSelected)) {
-                currentMonitorIdx = i;
-                createProjectorWindow(i);
-            }
-            if (isSelected) ImGui::SetItemDefaultFocus();
-        }
-        ImGui::EndCombo();
-    }
-    
-    ImGui::SameLine();
-    if (ImGui::Button("Refresh##Monitors")) {
-        availableMonitors = glfwGetMonitors(&monitorCount);
-    }
-    
-    ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(1.0f, 0.0f, 0.0f, 1.0f));
-    ImGui::Checkbox("BLACKOUT", &state.isBlackout);
-    ImGui::PopStyleColor();
-    
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    ImGui::Separator();
-    
-    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "AUDIO INPUT & MONITORING");
-    ImGui::Separator();
-    
-    static std::vector<AudioDeviceInfo> audioDevices = audioAnalyzer.getInputDevices();
-    static std::string currentDeviceName = "Seleziona Dispositivo...";
-    if (currentDeviceName == "Seleziona Dispositivo..." && !audioDevices.empty()) {
-        unsigned int activeId = audioAnalyzer.getCurrentDeviceId();
-        for (const auto& dev : audioDevices) {
-            if (dev.id == activeId) currentDeviceName = dev.name;
-        }
-    }
-    
-    ImGui::SetNextItemWidth(200.0f);
-    if (ImGui::BeginCombo("##AudioInterface", currentDeviceName.c_str())) {
-        for (const auto& device : audioDevices) {
-            bool isSelected = (currentDeviceName == device.name);
-            if (ImGui::Selectable(device.name.c_str(), isSelected)) {
-                currentDeviceName = device.name;
-                if (audioAnalyzer.isRecordingActive()) {
-                    audioAnalyzer.stopRecording();
-                }
-                audioAnalyzer.stop();
-                audioAnalyzer.start(device.id);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Refresh")) audioDevices = audioAnalyzer.getInputDevices();
+    ImGui::EndChild(); // PreviewsArea
 
-    // ----------------------------------------------------
-    // LOGICA PEAK HOLD E DBFS
-    // ----------------------------------------------------
-    static float peakHoldL = 0.0f, peakHoldR = 0.0f;
-    static double lastPeakL = ImGui::GetTime();
-    static double lastPeakR = ImGui::GetTime();
+    ImGui::Spacing();
 
-    // Il Peak Hold si resetta ogni 1.5 secondi se non viene battuto da un nuovo picco
-    if (audioData.peakL >= peakHoldL || (ImGui::GetTime() - lastPeakL) > 1.5) {
-        peakHoldL = audioData.peakL;
-        lastPeakL = ImGui::GetTime();
-    }
-    if (audioData.peakR >= peakHoldR || (ImGui::GetTime() - lastPeakR) > 1.5) {
-        peakHoldR = audioData.peakR;
-        lastPeakR = ImGui::GetTime();
-    }
-
-    float maxPeakLinear = std::max(peakHoldL, peakHoldR);
-    float maxDb = (maxPeakLinear > 0.0001f) ? 20.0f * std::log10(maxPeakLinear) : -60.0f;
-
-    // Testo DBFS a destra
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
-    ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "%3.0f dBFS", maxDb);
-
-    auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
-        float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
-        float holdDb = (linearHold > 0.0001f) ? 20.0f * std::log10(linearHold) : -60.0f;
-        
-        float fraction = std::clamp((db + 48.0f) / 48.0f, 0.0f, 1.0f);
-        float holdFraction = std::clamp((holdDb + 48.0f) / 48.0f, 0.0f, 1.0f);
-        
-        ImVec4 color = (db >= -0.1f) ? ImVec4(1.0f, 0.1f, 0.1f, 1.0f) : (db > -6.0f) ? ImVec4(1.0f, 0.8f, 0.1f, 1.0f) : ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
-        
-        ImGui::Text("%s", label); ImGui::SameLine(25.0f);
-        
-        ImVec2 pos = ImGui::GetCursorScreenPos();
-        ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, 10.0f); // Meter più spesso
-        
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-        // Sfondo meter
-        drawList->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(40, 40, 40, 255)); 
-        // Barra del volume in tempo reale
-        drawList->AddRectFilled(pos, ImVec2(pos.x + size.x * fraction, pos.y + size.y), ImGui::ColorConvertFloat4ToU32(color));
-        
-        // Indicatore linea di Picco
-        if (holdFraction > 0.0f) {
-            float hx = pos.x + size.x * holdFraction;
-            drawList->AddLine(ImVec2(hx, pos.y), ImVec2(hx, pos.y + size.y), IM_COL32(255, 255, 255, 255), 2.0f);
-        }
-        ImGui::Dummy(size);
-    };
-
-    drawDbMeter("L", audioData.peakL, peakHoldL);
-    drawDbMeter("R", audioData.peakR, peakHoldR);
-
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    if (!audioAnalyzer.isRecordingActive()) {
-        if (ImGui::Button("Inizia Registrazione")) {
-            auto t = std::time(nullptr);
-            auto tm = *std::localtime(&t);
-            char timeBuf[64];
-            std::strftime(timeBuf, sizeof(timeBuf), "rec_%Y%m%d_%H%M%S", &tm);
-            audioAnalyzer.startRecording(timeBuf);
-        }
-    } else {
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        if (ImGui::Button("Stop Registrazione")) {
-            audioAnalyzer.stopRecording();
-        }
-        ImGui::PopStyleColor();
-        ImGui::SameLine();
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Rec: %s", audioAnalyzer.getRecordingTimeFormatted().c_str());
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Apri Cartella")) {
-        #ifdef __APPLE__
-        system("open recordings/");
-        #endif
-    }
-    
-    // Testo BPM a destra (allineato sulla stessa riga della registrazione) con pulsante Calibrazione e OSC
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 300.0f);
-    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%5.1f BPM", audioData.bpm);
-    ImGui::SameLine();
-    static bool showBpmCalibration = false;
-    if (ImGui::SmallButton(showBpmCalibration ? "Calibra [-]" : "Calibra [+]")) {
-        showBpmCalibration = !showBpmCalibration;
-    }
-    ImGui::SameLine();
-    static bool showOscPanel = false;
-    if (ImGui::SmallButton(showOscPanel ? "OSC/QLC+ [-]" : "OSC/QLC+ [+]")) {
-        showOscPanel = !showOscPanel;
-    }
-    if (oscMgr != nullptr && oscMgr->isEnabled()) {
-        ImGui::SameLine();
-        if (oscMgr->isBeatFlashActive()) {
-            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "[* TAP]");
-        } else {
-            ImGui::TextDisabled("[o TAP]");
-        }
-    }
-
-    if (showBpmCalibration) {
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.12f, 0.15f, 1.0f));
-        ImGui::BeginChild("BpmCalibrationBox", ImVec2(0, 240), true);
-        
-        ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "CALIBRAZIONE BPM: REGRESSIONE LINEARE (m * Raw + q)");
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 175.0f);
-        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[Auto-Double < 110: ON]");
-        
-        float raw = audioAnalyzer.getRawBpm();
-        float slope = audioAnalyzer.getBpmSlope();
-        float intercept = audioAnalyzer.getBpmIntercept();
-        
-        ImGui::Text("Formula Attiva: BPM = %.4f * Raw %+.2f", slope, intercept);
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 220.0f);
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Raw: %.1f -> Calibrato: %.1f", raw, audioData.bpm);
-        
-        ImGui::Separator();
-        
-        // Tabella dei punti di calibrazione
-        auto pts = audioAnalyzer.getCalibrationPoints();
-        ImGui::BeginChild("PointsTable", ImVec2(0, 105), true);
-        if (pts.empty()) {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Nessun punto inserito. Il sistema usa calibrazione identica (m=1.0, q=0.0).");
-        } else {
-            ImGui::Columns(4, "CalibCols", false);
-            ImGui::SetColumnWidth(0, 70);
-            ImGui::SetColumnWidth(1, 140);
-            ImGui::SetColumnWidth(2, 140);
-            
-            ImGui::Text("#"); ImGui::NextColumn();
-            ImGui::Text("BPM Letto (Raw)"); ImGui::NextColumn();
-            ImGui::Text("BPM Reale (Target)"); ImGui::NextColumn();
-            ImGui::Text("Azione"); ImGui::NextColumn();
-            ImGui::Separator();
-            
-            int toDelete = -1;
-            for (size_t i = 0; i < pts.size(); ++i) {
-                ImGui::PushID(static_cast<int>(i));
-                ImGui::Text("Punto %zu", i + 1); ImGui::NextColumn();
-                ImGui::Text("%.1f BPM", pts[i].raw); ImGui::NextColumn();
-                ImGui::Text("%.1f BPM", pts[i].actual); ImGui::NextColumn();
-                if (ImGui::SmallButton("Elimina")) {
-                    toDelete = static_cast<int>(i);
-                }
-                ImGui::NextColumn();
-                ImGui::PopID();
-            }
-            ImGui::Columns(1);
-            if (toDelete >= 0) {
-                audioAnalyzer.removeCalibrationPoint(toDelete);
-                LOG_INFO("AudioAnalyzer", "Rimosso punto di calibrazione #" + std::to_string(toDelete + 1));
-            }
-        }
-        ImGui::EndChild();
-        
-        // Riga Aggiunta Nuovo Punto
-        static float newRaw = 120.0f;
-        static float newActual = 123.0f;
-        
-        ImGui::SetNextItemWidth(80.0f);
-        ImGui::InputFloat("##NewRaw", &newRaw, 0.5f, 1.0f, "%.1f");
-        ImGui::SameLine();
-        if (ImGui::Button("Cattura Raw")) {
-            if (raw > 30.0f) newRaw = raw;
-        }
-        ImGui::SameLine();
-        ImGui::Text("-> Reale:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80.0f);
-        ImGui::InputFloat("##NewActual", &newActual, 0.5f, 1.0f, "%.1f");
-        
-        ImGui::SameLine();
-        if (ImGui::Button("TAP")) {
-            static double lastTapTime = 0.0;
-            static std::vector<double> tapIntervals;
-            double nowTap = ImGui::GetTime();
-            if (lastTapTime > 0.0) {
-                double diff = nowTap - lastTapTime;
-                if (diff >= 0.25 && diff <= 2.0) {
-                    tapIntervals.push_back(diff);
-                    if (tapIntervals.size() > 5) tapIntervals.erase(tapIntervals.begin());
-                    double avgDiff = 0.0;
-                    for (double d : tapIntervals) avgDiff += d;
-                    avgDiff /= tapIntervals.size();
-                    newActual = static_cast<float>(std::round(60.0 / avgDiff));
-                } else {
-                    tapIntervals.clear();
-                }
-            }
-            lastTapTime = nowTap;
-        }
-        
-        ImGui::SameLine();
-        if (ImGui::Button("+ Aggiungi Punto")) {
-            if (newRaw > 30.0f && newActual > 30.0f) {
-                audioAnalyzer.addCalibrationPoint(newRaw, newActual);
-                LOG_INFO("AudioAnalyzer", "Aggiunto punto: Raw=" + std::to_string(newRaw) + " -> Actual=" + std::to_string(newActual));
-            }
-        }
-        
-        ImGui::SameLine();
-        if (ImGui::Button("Reset Punti")) {
-            audioAnalyzer.clearCalibrationPoints();
-            LOG_INFO("AudioAnalyzer", "Azzerati punti di calibrazione BPM.");
-        }
-        
-        if (configMgr != nullptr) {
-            ImGui::SameLine();
-            if (ImGui::Button("Salva in config.json")) {
-                auto currentPts = audioAnalyzer.getCalibrationPoints();
-                std::vector<AppConfig::BpmCalibrationPoint> cfgPts;
-                for (const auto& p : currentPts) {
-                    cfgPts.push_back({p.raw, p.actual});
-                }
-                configMgr->saveBpmCalibration(audioAnalyzer.getBpmSlope(), audioAnalyzer.getBpmIntercept(), cfgPts);
-                LOG_INFO("ConfigManager", "Calibrazione BPM salvata con successo in config.json");
-            }
-        }
-        
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-    }
-
-    if (showOscPanel && oscMgr != nullptr) {
-        ImGui::Dummy(ImVec2(0.0f, 3.0f));
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.13f, 0.17f, 1.0f));
-        ImGui::BeginChild("OscControlBox", ImVec2(0, 155), true);
-        
-        ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "TRASMISSIONE OSC / QLC+ (SINCRONIZZAZIONE LUCI)");
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 170.0f);
-        if (oscMgr->isEnabled()) {
-            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ATTIVO -> %s:%d]", oscMgr->getTargetIp().c_str(), oscMgr->getTargetPort());
-        } else {
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[DISABILITATO]");
-        }
-
-        static char oscIpBuf[64] = "";
-        static int oscPortBuf = 7700;
-        static char oscBpmAddrBuf[64] = "";
-        static char oscTapAddrBuf[64] = "";
-        static bool oscInitialized = false;
-
-        if (!oscInitialized) {
-            std::strncpy(oscIpBuf, oscMgr->getTargetIp().c_str(), sizeof(oscIpBuf) - 1);
-            oscPortBuf = oscMgr->getTargetPort();
-            std::strncpy(oscBpmAddrBuf, oscMgr->getBpmAddress().c_str(), sizeof(oscBpmAddrBuf) - 1);
-            std::strncpy(oscTapAddrBuf, oscMgr->getTapAddress().c_str(), sizeof(oscTapAddrBuf) - 1);
-            oscInitialized = true;
-        }
-
-        bool isOscEnabled = oscMgr->isEnabled();
-        if (ImGui::Checkbox("Abilita OSC", &isOscEnabled)) {
-            oscMgr->setEnabled(isOscEnabled);
-        }
-        ImGui::SameLine();
-        bool sendBeatTap = oscMgr->isSendTapOnBeat();
-        if (ImGui::Checkbox("Invia TAP a ogni Beat", &sendBeatTap)) {
-            oscMgr->setSendTapOnBeat(sendBeatTap);
-        }
-        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 150.0f);
-        ImGui::TextDisabled("Pkt inviati: %llu", (unsigned long long)oscMgr->getPacketsSent());
-
-        // Riga Host e Porta
-        ImGui::SetNextItemWidth(110.0f);
-        if (ImGui::InputText("IP Target", oscIpBuf, sizeof(oscIpBuf))) {
-            oscMgr->updateTarget(oscIpBuf, oscPortBuf);
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(70.0f);
-        if (ImGui::InputInt("Porta UDP", &oscPortBuf, 0)) {
-            oscMgr->updateTarget(oscIpBuf, oscPortBuf);
-        }
-        ImGui::SameLine();
-        ImGui::TextDisabled("(Default QLC+: 7700)");
-
-        // Riga Indirizzi OSC
-        ImGui::SetNextItemWidth(110.0f);
-        if (ImGui::InputText("Path BPM (Clock)", oscBpmAddrBuf, sizeof(oscBpmAddrBuf))) {
-            oscMgr->updateAddresses(oscBpmAddrBuf, oscTapAddrBuf);
-        }
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(110.0f);
-        if (ImGui::InputText("Path TAP (Speed Dial)", oscTapAddrBuf, sizeof(oscTapAddrBuf))) {
-            oscMgr->updateAddresses(oscBpmAddrBuf, oscTapAddrBuf);
-        }
-
-        ImGui::Separator();
-
-        // Pulsanti Test e Salvataggio
-        if (ImGui::Button("Test Invia BPM")) {
-            oscMgr->triggerManualBpm(audioData.bpm > 30.0f ? audioData.bpm : 120.0f);
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invia il valore BPM a QLC+ (utile per testare il clock master o mappare con Auto-Detect)");
-
-        ImGui::SameLine();
-        if (ImGui::Button("Test TAP (Speed Dial)")) {
-            oscMgr->triggerManualTap();
-        }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invia un segnale TAP (1.0 -> 0.0) per mappare 'Auto Detect' o testare lo Speed Dial in QLC+");
-
-        if (configMgr != nullptr) {
-            ImGui::SameLine();
-            if (ImGui::Button("Salva OSC in config.json")) {
-                configMgr->saveOscConfig(oscMgr->isEnabled(), oscIpBuf, oscPortBuf, oscBpmAddrBuf, oscTapAddrBuf, oscMgr->isSendTapOnBeat(), oscMgr->getPulseDurationMs());
-                LOG_INFO("ConfigManager", "Configurazione OSC salvata con successo in config.json");
-            }
-        }
-
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
-    }
-    
-    ImGui::Dummy(ImVec2(0.0f, 10.0f));
-    
-    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "CONFIGURAZIONE LIVE");
-    ImGui::SameLine(ImGui::GetWindowWidth() - ImGui::CalcTextSize("LIVE SETTINGS").x - 30.0f);
-    if (ImGui::Button("LIVE SETTINGS")) { 
-        targetSettingsTab = "Live & System Settings"; 
-        openSettingsModal = true; 
-    }
-    ImGui::Separator();
-    
-    ImGui::Text("Fase Evento:");
-    int ep = state.useAnyEventPhase ? -1 : static_cast<int>(state.currentEventPhase);
-    if (ImGui::RadioButton("Ambient", ep == AMBIENT)) { state.currentEventPhase = AMBIENT; state.useAnyEventPhase = false; } ImGui::SameLine();
-    if (ImGui::RadioButton("Low", ep == LOW)) { state.currentEventPhase = LOW; state.useAnyEventPhase = false; } ImGui::SameLine();
-    if (ImGui::RadioButton("Mid", ep == MID)) { state.currentEventPhase = MID; state.useAnyEventPhase = false; } ImGui::SameLine();
-    if (ImGui::RadioButton("High", ep == HIGH)) { state.currentEventPhase = HIGH; state.useAnyEventPhase = false; } ImGui::SameLine();
-    if (ImGui::RadioButton("ANY", ep == -1)) { state.useAnyEventPhase = true; }
-    
-    ImGui::RadioButton("COLOR MODE", &state.colorMode, 0); ImGui::SameLine();
-    ImGui::RadioButton("PALETTE MODE", &state.colorMode, 1);
-
-    if (state.colorMode == 0) {
-        ImGui::Text("Colori Attivi:");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Tutti##Colors")) {
-            state.activeColors = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Nessuno##Colors")) {
-            state.activeColors.clear();
-        }
-
-        const char* colorKeys[] = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
-        const char* colorLabels[] = {"Bianco", "Rosso", "Verde", "Blu", "Ciano", "Magenta", "Giallo", "Arancione", "Nero"};
-        for (int i = 0; i < 9; i++) {
-            bool active = std::find(state.activeColors.begin(), state.activeColors.end(), colorKeys[i]) != state.activeColors.end();
-            if (ImGui::Checkbox(colorLabels[i], &active)) {
-                if (active) state.activeColors.push_back(colorKeys[i]);
-                else state.activeColors.erase(std::remove(state.activeColors.begin(), state.activeColors.end(), colorKeys[i]), state.activeColors.end());
-            }
-            if ((i + 1) % 4 != 0) ImGui::SameLine();
-        }
-        if (9 % 4 != 0) ImGui::NewLine();
-    } else {
-        ImGui::Text("Palette Attive:");
-        ImGui::SameLine();
-        
-        std::set<std::pair<std::string, std::string>> uniquePalettes;
-        bool hasNoPaletteVisuals = false;
-        for (auto& [key, bg] : assetMgr.getMutableAssets().get_backgrounds()) {
-            std::string prim = ColorUtils::normalizeColorName(bg.get_primary_color());
-            std::string sec = ColorUtils::normalizeColorName(bg.get_secondary_color());
-            if (!prim.empty()) {
-                uniquePalettes.insert({prim, sec});
-            } else {
-                hasNoPaletteVisuals = true;
-            }
-        }
-
-        if (ImGui::SmallButton("Tutte##Palettes")) {
-            state.activePalettes.clear();
-            if (hasNoPaletteVisuals) state.activePalettes.push_back("Nessuna Palette");
-            for (const auto& pal : uniquePalettes) {
-                state.activePalettes.push_back(pal.first + (pal.second.empty() ? "" : "-" + pal.second));
-            }
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Nessuna##Palettes")) {
-            state.activePalettes.clear();
-        }
-
-        int count = 0;
-        if (hasNoPaletteVisuals) {
-            std::string noPalKey = "Nessuna Palette";
-            bool isActive = std::find(state.activePalettes.begin(), state.activePalettes.end(), noPalKey) != state.activePalettes.end();
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            drawPaletteSquare("", "", 30.0f);
-            if (isActive) {
-                ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.5f);
-            }
-            ImGui::SetCursorScreenPos(p);
-            if (ImGui::InvisibleButton("##no_pal", ImVec2(30.0f, 30.0f))) {
-                if (isActive) state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), noPalKey), state.activePalettes.end());
-                else state.activePalettes.push_back(noPalKey);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nessuna Palette (Visual Neutri)");
-            count++;
-            ImGui::SameLine();
-        }
-
-        for (const auto& pal : uniquePalettes) {
-            std::string palKey = pal.first + (pal.second.empty() ? "" : "-" + pal.second);
-            bool isActive = std::find(state.activePalettes.begin(), state.activePalettes.end(), palKey) != state.activePalettes.end();
-            
-            ImVec2 p = ImGui::GetCursorScreenPos();
-            drawPaletteSquare(pal.first, pal.second, 30.0f);
-            
-            if (isActive) {
-                ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.5f);
-            }
-            
-            ImGui::SetCursorScreenPos(p);
-            if (ImGui::InvisibleButton(palKey.c_str(), ImVec2(30.0f, 30.0f))) {
-                if (isActive) state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), palKey), state.activePalettes.end());
-                else state.activePalettes.push_back(palKey);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", palKey.c_str());
-            
-            if ((count + 1) % 6 != 0) ImGui::SameLine();
-            count++;
-        }
-        if (count % 6 != 0) ImGui::NewLine();
-    }
-    
-    ImGui::Dummy(ImVec2(0.0f, 10.0f));
-    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
-    
-    // Bottone Show Reasoning allineato a destra
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 140.0f);
-    ImGui::PushStyleColor(ImGuiCol_Button, state.showReasoningWindow ? ImVec4(0.2f, 0.6f, 0.8f, 1.0f) : ImVec4(0.2f, 0.3f, 0.4f, 1.0f));
-    if (ImGui::Button("Show Reasoning", ImVec2(140.0f, 0.0f))) {
-        state.showReasoningWindow = !state.showReasoningWindow;
-    }
-    ImGui::PopStyleColor();
-    ImGui::Separator();
-    
-    bool autoModeVal = state.isAutoMode;
-    if (ImGui::Checkbox("Auto Mode (M)", &autoModeVal)) {
-        if (autoModeVal) {
-            state.activateAutoModeImmediate(assetMgr.getAssets());
-            LOG_INFO("UI", "Auto Mode attivata da UI: cambio immediato eseguito.");
-        } else {
-            state.isAutoMode = false;
-            LOG_INFO("UI", "Auto Mode disattivata da UI.");
-        }
-    }
-    ImGui::SameLine();
-
-    // Import/Dataset
-    static std::vector<std::string> datasetFiles;
-    static std::string currentDataset = "new_dataset_14_feature.csv";
-    static bool needDatasetRefresh = true;
-    if (needDatasetRefresh) {
-        datasetFiles.clear();
-        if (fs::exists("datasets")) {
-            for (const auto& entry : fs::directory_iterator("datasets")) {
-                if (entry.path().extension() == ".csv") {
-                    datasetFiles.push_back(entry.path().filename().string());
-                }
-            }
-        }
-        if (!fs::exists("datasets/" + currentDataset)) {
-            if (fs::exists("datasets/knn_dataset.csv")) {
-                currentDataset = "knn_dataset.csv";
-            } else if (!datasetFiles.empty()) {
-                currentDataset = datasetFiles[0];
-            }
-        }
-        needDatasetRefresh = false;
-    }
-
-    ImGui::SetNextItemWidth(150.0f);
-    if (ImGui::BeginCombo("##DatasetCombo", currentDataset.c_str())) {
-        for (const auto& ds : datasetFiles) {
-            bool isSelected = (currentDataset == ds);
-            if (ImGui::Selectable(ds.c_str(), isSelected)) {
-                currentDataset = ds;
-                knnClassifier.loadDataset("datasets/" + currentDataset);
-            }
-        }
-        ImGui::EndCombo();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Import Preset")) {
-        auto files = openMultipleFilesDialog("Seleziona CSV Dataset", {"csv"});
-        for (const auto& file : files) {
-            fs::path src(file);
-            fs::path dest = fs::path("datasets") / src.filename();
-            try {
-                fs::copy_file(src, dest, fs::copy_options::overwrite_existing);
-                needDatasetRefresh = true;
-                currentDataset = dest.filename().string();
-                knnClassifier.loadDataset(dest.string());
-            } catch (...) {}
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Create Preset")) openCreateDatasetModal = true;
-
-    ImGui::Dummy(ImVec2(0, 5));
-    
-    // ----------------------------------------------------
-    // BARRA PROPORZIONALE LOW / MID / HIGH (Filtro Finale)
-    // ----------------------------------------------------
-    float sLow = state.smoothedScores[0];
-    float sMid = state.smoothedScores[1];
-    float sHigh = state.smoothedScores[2];
-    float sTot = sLow + sMid + sHigh;
-    if (sTot < 0.0001f) sTot = 1.0f; // Evita divisioni per 0
-
-    ImVec2 barPos = ImGui::GetCursorScreenPos();
-    float barWidth = ImGui::GetContentRegionAvail().x;
-    float barHeight = 15.0f;
-    float currentX = barPos.x;
-    ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-    auto drawSegment = [&](float val, ImU32 col) {
-        float w = barWidth * (val / sTot);
-        if (w > 0) {
-            drawList->AddRectFilled(ImVec2(currentX, barPos.y), ImVec2(currentX + w, barPos.y + barHeight), col);
-            currentX += w;
-        }
-    };
-
-    // Verde (Low), Arancione (Mid), Rosso (High)
-    drawSegment(sLow, IM_COL32(40, 180, 80, 255));   
-    drawSegment(sMid, IM_COL32(240, 160, 20, 255));  
-    drawSegment(sHigh, IM_COL32(220, 40, 40, 255));  
-    ImGui::Dummy(ImVec2(barWidth, barHeight));
-
-    // Testi Informativi Fasi Finali
-    auto getDynName = [](SongDynamic d) -> const char* {
-        if (d == VERSE) return "LOW";
-        if (d == BUILD) return "MID";
-        if (d == CHORUS) return "HIGH";
-        return "MANUAL";
-    };
-
-    int displayBeats = static_cast<int>(state.masterPhraseBeats);
-    ImGui::Text("Master Grid Phrase: %d / 32", displayBeats);
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 220.0f);
-    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Final Graphics State: [%s]", getDynName(state.currentSongDynamicTarget));
-
-    ImGui::EndChild(); // Chiude MonitoringAuto
-    
-    ImGui::EndChild();
-    
-    ImGui::Columns(1);
-    
-    ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    ImGui::Separator();
-    
-    ImGui::BeginChild("BottomArea", ImVec2(0, bottomHeight), false);
+    // --- BOTTOM DECKS AREA ---
+    ImGui::BeginChild("BottomArea", ImVec2(0, decksAreaHeight), false);
     ImGui::Columns(2, "BottomColumns", false);
     ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.70f);
     
@@ -1263,6 +1348,8 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::EndChild(); 
     ImGui::Columns(1);
+
+    ImGui::EndChild(); // Closes RightWorkspace
     
     const char* colorNames[] = {"Nessuno", "White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow"};
     auto renderColorDropdown = [&](const char* label, std::string& currentColor) {
@@ -1955,70 +2042,212 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
 
             ImGuiTabItemFlags lsFlags = (targetSettingsTab == "Live & System Settings") ? ImGuiTabItemFlags_SetSelected : 0;
             if (ImGui::BeginTabItem("Live & System Settings", nullptr, lsFlags)) {
-                if (targetSettingsTab == "Live & System Settings") targetSettingsTab = "";
+                if (targetSettingsTab == "Live & System Settings") {
+                    targetSettingsTab = "";
+                    if (configMgr != nullptr) localConfig = configMgr->getConfig();
+                }
+
+                static std::string configSaveStatus = "";
+                static double configSaveTime = 0.0;
 
                 if (ImGui::BeginChild("SysTabScrollArea", ImVec2(0, ImGui::GetContentRegionAvail().y - 50.0f), false)) {
-                    ImGui::Text("Impostazioni Generali di Sistema");
-                    ImGui::Separator();
                     
-                    if (ImGui::BeginTable("SysSettingsTable", 2)) {
-                        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 250.0f);
-                        ImGui::TableSetupColumn("Input");
-                        
+                    auto drawSettingString = [](const char* label, const char* id, std::string& str) {
+                        char buf[256];
+                        std::strncpy(buf, str.c_str(), sizeof(buf) - 1);
+                        buf[sizeof(buf) - 1] = '\0';
                         ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0); ImGui::AlignTextToFramePadding(); ImGui::Text("Auto Mode Start");
-                        ImGui::TableSetColumnIndex(1); ImGui::Checkbox("##autoStart", &state.isAutoMode);
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::InputText(id, buf, sizeof(buf))) {
+                            str = buf;
+                        }
+                    };
 
+                    auto drawSettingInt = [](const char* label, const char* id, int& val) {
                         ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0); ImGui::AlignTextToFramePadding(); ImGui::Text("Oscura Proiettore allo Start");
-                        ImGui::TableSetColumnIndex(1); ImGui::Checkbox("##blackout", &state.isBlackout);
-                        
-                        ImGui::EndTable();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(150.0f);
+                        ImGui::InputInt(id, &val);
+                    };
+
+                    auto drawSettingSliderInt = [](const char* label, const char* id, int& val, int minV, int maxV) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(200.0f);
+                        ImGui::SliderInt(id, &val, minV, maxV);
+                    };
+
+                    auto drawSettingDouble = [](const char* label, const char* id, double& val) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(150.0f);
+                        ImGui::InputDouble(id, &val);
+                    };
+
+                    auto drawSettingFloat = [](const char* label, const char* id, float& val) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::SetNextItemWidth(150.0f);
+                        ImGui::InputFloat(id, &val);
+                    };
+
+                    auto drawSettingBool = [](const char* label, const char* id, bool& val) {
+                        ImGui::TableNextRow();
+                        ImGui::TableSetColumnIndex(0);
+                        ImGui::AlignTextToFramePadding();
+                        ImGui::Text("%s", label);
+                        ImGui::TableSetColumnIndex(1);
+                        ImGui::Checkbox(id, &val);
+                    };
+
+                    // 1. Percorsi File & Directory (Paths)
+                    if (ImGui::CollapsingHeader("Percorsi File & Directory (paths)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginTable("PathsTable", 2)) {
+                            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+                            drawSettingString("Assets Directory", "##assetsDir", localConfig.assetsDir);
+                            drawSettingString("Key Mapping File", "##keyMap", localConfig.keyMappingFile);
+                            drawSettingString("Assets Config File", "##assetsCfg", localConfig.assetsConfigFile);
+                            drawSettingString("Recordings Directory", "##recDir", localConfig.recordingsDir);
+                            drawSettingString("KNN Dataset File", "##knnData", localConfig.knnDatasetFile);
+                            ImGui::EndTable();
+                        }
                     }
-                    
-                    ImGui::Dummy(ImVec2(0, 15));
-                    ImGui::Text("Configurazioni Avanzate (AppConfig)");
+
+                    // 2. Display & Finestra Output
+                    if (ImGui::CollapsingHeader("Display & Finestra Output (display)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginTable("DisplayTable", 2)) {
+                            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+                            drawSettingString("Window Name", "##winName", localConfig.windowName);
+                            drawSettingInt("UI Window Width", "##uiW", localConfig.uiWindowWidth);
+                            drawSettingInt("UI Window Height", "##uiH", localConfig.uiWindowHeight);
+                            drawSettingDouble("Preview Target FPS", "##prevFps", localConfig.previewFps);
+                            drawSettingBool("Auto Mode allo Start", "##autoStart", localConfig.autoModeStart);
+                            drawSettingBool("Oscura Proiettore allo Start", "##blackoutStart", localConfig.blackoutOnStart);
+                            ImGui::EndTable();
+                        }
+                    }
+
+                    // 3. Motore Audio & AI KNN (advanced)
+                    if (ImGui::CollapsingHeader("Motore Audio & AI KNN (advanced)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginTable("AdvTable", 2)) {
+                            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+                            int sRate = static_cast<int>(localConfig.audioSampleRate);
+                            drawSettingInt("Audio Sample Rate (Hz)", "##sRate", sRate);
+                            localConfig.audioSampleRate = sRate;
+
+                            int bufF = static_cast<int>(localConfig.audioBufferFrames);
+                            drawSettingInt("Audio Buffer Frames", "##bufF", bufF);
+                            localConfig.audioBufferFrames = bufF;
+
+                            drawSettingSliderInt("Debounce Verse (Low)", "##debV", localConfig.debounceVerse, 1, 16);
+                            drawSettingSliderInt("Debounce Build (Mid)", "##debB", localConfig.debounceBuild, 1, 16);
+                            drawSettingSliderInt("Debounce Chorus (High)", "##debC", localConfig.debounceChorus, 1, 16);
+
+                            int hSize = static_cast<int>(localConfig.knnHistorySize);
+                            drawSettingSliderInt("KNN History Size", "##knnHist", hSize, 5, 100);
+                            localConfig.knnHistorySize = hSize;
+
+                            drawSettingSliderInt("KNN K Neighbors", "##knnK", localConfig.knnKNeighbors, 1, 51);
+                            
+                            int strobo = strobeDurationMs;
+                            drawSettingSliderInt("Strobe Duration (ms)", "##strobo", strobo, 10, 500);
+                            strobeDurationMs = strobo;
+                            localConfig.strobeDurationMs = strobo;
+
+                            ImGui::EndTable();
+                        }
+                    }
+
+                    // 4. Trasmissione OSC / QLC+ Network (osc)
+                    if (ImGui::CollapsingHeader("Trasmissione OSC / QLC+ Network (osc)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginTable("OscTable", 2)) {
+                            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+                            drawSettingBool("Abilita OSC", "##oscEn", localConfig.osc.enabled);
+                            drawSettingString("IP Target (QLC+)", "##oscIp", localConfig.osc.ip);
+                            drawSettingInt("Porta UDP", "##oscPort", localConfig.osc.port);
+                            drawSettingString("Path BPM (Clock Master)", "##oscBpm", localConfig.osc.bpmAddress);
+                            drawSettingString("Path TAP (Speed Dial)", "##oscTap", localConfig.osc.tapAddress);
+                            drawSettingBool("Invia TAP a ogni Beat", "##oscSendTap", localConfig.osc.sendTapOnBeat);
+                            drawSettingSliderInt("Pulse Duration (ms)", "##oscPulse", localConfig.osc.pulseDurationMs, 10, 200);
+                            ImGui::EndTable();
+                        }
+                    }
+
+                    // 5. Calibrazione BPM (bpm_calibration)
+                    if (ImGui::CollapsingHeader("Calibrazione BPM: Regressione Lineare (bpm_calibration)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginTable("BpmCalibTable", 2)) {
+                            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+                            drawSettingFloat("Pendenza Regressione (slope m)", "##calibSlope", localConfig.bpmCalibration.slope);
+                            drawSettingFloat("Intercetta Bias (intercept q)", "##calibInter", localConfig.bpmCalibration.intercept);
+                            drawSettingFloat("Soglia Minima Raddoppio (< X BPM)", "##minBpm", localConfig.bpmCalibration.minBpmThreshold);
+                            
+                            ImGui::TableNextRow();
+                            ImGui::TableSetColumnIndex(0);
+                            ImGui::AlignTextToFramePadding();
+                            ImGui::Text("Punti di Calibrazione Salvati");
+                            ImGui::TableSetColumnIndex(1);
+                            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "%zu punti configurati (modificabili dal tab I/O)", localConfig.bpmCalibration.points.size());
+
+                            ImGui::EndTable();
+                        }
+                    }
+
+                    // 6. Ableton Link & Master Clock (ableton_link)
+                    if (ImGui::CollapsingHeader("Ableton Link & Timing (ableton_link)", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        if (ImGui::BeginTable("AbletonTable", 2)) {
+                            ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 240.0f);
+                            ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
+                            drawSettingInt("Phrase Length (Battute)", "##pLen", localConfig.phraseLength);
+                            drawSettingDouble("Default BPM", "##defBpm", localConfig.default_bpm);
+                            ImGui::EndTable();
+                        }
+                    }
+
+                    ImGui::Spacing();
                     ImGui::Separator();
-                    
-                    if (ImGui::BeginTable("AdvSettingsTable", 2)) {
-                        ImGui::TableSetupColumn("Label", ImGuiTableColumnFlags_WidthFixed, 250.0f);
-                        ImGui::TableSetupColumn("Input", ImGuiTableColumnFlags_WidthStretch);
-                        
-                        auto drawSettingInt = [](const char* label, const char* id, int& val) {
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::Text("%s", label);
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::SetNextItemWidth(150.0f);
-                            ImGui::InputInt(id, &val);
-                        };
 
-                        auto drawSettingDouble = [](const char* label, const char* id, double& val) {
-                            ImGui::TableNextRow();
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::AlignTextToFramePadding();
-                            ImGui::Text("%s", label);
-                            ImGui::TableSetColumnIndex(1);
-                            ImGui::SetNextItemWidth(150.0f);
-                            ImGui::InputDouble(id, &val);
-                        };
-
-                        int sRate = localConfig.audioSampleRate; drawSettingInt("Audio Sample Rate", "##sRate", sRate); localConfig.audioSampleRate = sRate;
-                        int bufF = localConfig.audioBufferFrames; drawSettingInt("Audio Buffer Frames", "##bufF", bufF); localConfig.audioBufferFrames = bufF;
-                        int debV = localConfig.debounceVerse; drawSettingInt("Debounce Verse", "##debV", debV); localConfig.debounceVerse = debV;
-                        int debB = localConfig.debounceBuild; drawSettingInt("Debounce Build", "##debB", debB); localConfig.debounceBuild = debB;
-                        int debC = localConfig.debounceChorus; drawSettingInt("Debounce Chorus", "##debC", debC); localConfig.debounceChorus = debC;
-                        
-                        int hSize = localConfig.knnHistorySize; drawSettingInt("KNN History Size", "##knnHist", hSize); localConfig.knnHistorySize = hSize;
-                        int knnK = localConfig.knnKNeighbors; drawSettingInt("KNN K Neighbors", "##knnK", knnK); localConfig.knnKNeighbors = knnK;
-                        
-                        int strobo = strobeDurationMs; drawSettingInt("Strobe Duration (ms)", "##strobo", strobo); strobeDurationMs = strobo;
-                        
-                        int pLen = localConfig.phraseLength; drawSettingInt("Phrase Length (Ableton)", "##pLen", pLen); localConfig.phraseLength = pLen;
-                        double defBpm = localConfig.default_bpm; drawSettingDouble("Default BPM", "##defBpm", defBpm); localConfig.default_bpm = defBpm;
-
-                        ImGui::EndTable();
+                    // Pulsante Salva in config.json
+                    if (ImGui::Button("Salva in config.json", ImVec2(180, 32))) {
+                        if (configMgr != nullptr) {
+                            configMgr->saveFullConfig(localConfig);
+                            strobeDurationMs = localConfig.strobeDurationMs;
+                            if (oscMgr != nullptr) {
+                                oscMgr->setEnabled(localConfig.osc.enabled);
+                                oscMgr->updateTarget(localConfig.osc.ip, localConfig.osc.port);
+                                oscMgr->updateAddresses(localConfig.osc.bpmAddress, localConfig.osc.tapAddress);
+                                oscMgr->setSendTapOnBeat(localConfig.osc.sendTapOnBeat);
+                                oscMgr->setPulseDurationMs(localConfig.osc.pulseDurationMs);
+                            }
+                            audioAnalyzer.setCalibrationLine(localConfig.bpmCalibration.slope, localConfig.bpmCalibration.intercept);
+                            configSaveStatus = "Configurazione salvata con successo in config.json!";
+                            configSaveTime = ImGui::GetTime();
+                            LOG_INFO("ConfigManager", "Salvate tutte le impostazioni da Live Settings a config.json");
+                        }
+                    }
+                    if (!configSaveStatus.empty() && (ImGui::GetTime() - configSaveTime < 4.0)) {
+                        ImGui::SameLine();
+                        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "%s", configSaveStatus.c_str());
                     }
                 }
                 ImGui::EndChild();
@@ -2035,14 +2264,26 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             hoverStartTime = 0.0;
         }
 
-        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 250.0f, ImGui::GetWindowHeight() - 40.0f));
+        ImGui::SetCursorPos(ImVec2(ImGui::GetWindowWidth() - 270.0f, ImGui::GetWindowHeight() - 40.0f));
         
         if (ImGui::Button("Chiudi", ImVec2(100, 30))) {
             ImGui::CloseCurrentPopup();
         }
         ImGui::SameLine();
-        if (ImGui::Button("Salva e Chiudi", ImVec2(130, 30))) {
+        if (ImGui::Button("Salva e Chiudi", ImVec2(140, 30))) {
             assetMgr.saveAssetsConfig();
+            if (configMgr != nullptr) {
+                configMgr->saveFullConfig(localConfig);
+                strobeDurationMs = localConfig.strobeDurationMs;
+                if (oscMgr != nullptr) {
+                    oscMgr->setEnabled(localConfig.osc.enabled);
+                    oscMgr->updateTarget(localConfig.osc.ip, localConfig.osc.port);
+                    oscMgr->updateAddresses(localConfig.osc.bpmAddress, localConfig.osc.tapAddress);
+                    oscMgr->setSendTapOnBeat(localConfig.osc.sendTapOnBeat);
+                    oscMgr->setPulseDurationMs(localConfig.osc.pulseDurationMs);
+                }
+                audioAnalyzer.setCalibrationLine(localConfig.bpmCalibration.slope, localConfig.bpmCalibration.intercept);
+            }
             ImGui::CloseCurrentPopup();
         }
 
@@ -2388,7 +2629,7 @@ cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& asse
 }
 
 cv::Mat GraphicsManager::applyStrobeEffect(cv::Mat composedFrame, RuntimeState& state, double bpm, bool isSpacePressed) {
-    if (!isSpacePressed) {
+    if (!isSpacePressed && !isGuiStrobeActive) {
         state.nextStrobeTime = std::nullopt;
         return composedFrame;
     }

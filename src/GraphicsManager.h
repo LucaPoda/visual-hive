@@ -41,6 +41,7 @@ private:
 
     std::map<std::string, GLuint> thumbnailCache;
     std::string targetSettingsTab; 
+    bool isGuiStrobeActive = false; 
 
     // Variabili per la Preview on Hover
     cv::VideoCapture hoverCap;

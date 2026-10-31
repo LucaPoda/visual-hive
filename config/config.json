@@ -15,6 +15,7 @@
     },
     "bpm_calibration": {
         "intercept": 3.166548490524292,
+        "min_bpm_threshold": 110.0,
         "points": [
             {
                 "actual": 120.0,
@@ -88,6 +89,9 @@
         "slope": 0.9925392866134644
     },
     "display": {
+        "auto_mode_start": false,
+        "blackout_on_start": false,
+        "preview_fps": 30.0,
         "uiWindowHeight": 1080,
         "uiWindowWidth": 1920,
         "window_name": "Visual Hive Live"
@@ -95,7 +99,9 @@
     "paths": {
         "assets_config_file": "config/assets_config.json",
         "assets_directory": "assets",
-        "key_mapping_file": "config/key_mapping.csv"
+        "key_mapping_file": "config/key_mapping.csv",
+        "knn_dataset_file": "datasets/new_dataset_14_feature.csv",
+        "recordings_directory": "recordings"
     },
     "osc": {
         "enabled": true,

@@ -44,12 +44,17 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
         config.assetsDir = data["paths"].value("assets_directory", "assets");
         config.keyMappingFile = data["paths"].value("key_mapping_file", "config/key_mapping.csv");
         config.assetsConfigFile = data["paths"].value("assets_config_file", "config/assets_config.json");
+        config.recordingsDir = data["paths"].value("recordings_directory", "recordings");
+        config.knnDatasetFile = data["paths"].value("knn_dataset_file", "datasets/new_dataset_14_feature.csv");
     }
 
     if (data.count("display")) {
-        config.windowName = data["display"].value("window_name", "visual-hive Output");
+        config.windowName = data["display"].value("window_name", "Visual Hive Live");
         config.uiWindowWidth = data["display"].value("uiWindowWidth", 1920);
         config.uiWindowHeight = data["display"].value("uiWindowHeight", 1080);
+        config.previewFps = data["display"].value("preview_fps", 30.0);
+        config.autoModeStart = data["display"].value("auto_mode_start", false);
+        config.blackoutOnStart = data["display"].value("blackout_on_start", false);
     } else {
         config.uiWindowWidth = 1920;
         config.uiWindowHeight = 1080;
@@ -83,6 +88,7 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
     if (data.count("bpm_calibration")) {
         config.bpmCalibration.slope = data["bpm_calibration"].value("slope", 1.0f);
         config.bpmCalibration.intercept = data["bpm_calibration"].value("intercept", 0.0f);
+        config.bpmCalibration.minBpmThreshold = data["bpm_calibration"].value("min_bpm_threshold", 110.0f);
         if (data["bpm_calibration"].count("points") && data["bpm_calibration"]["points"].is_array()) {
             config.bpmCalibration.points.clear();
             for (const auto& p : data["bpm_calibration"]["points"]) {
@@ -155,10 +161,15 @@ bool ConfigManager::saveConfig() const {
     data["paths"]["assets_directory"] = config.assetsDir;
     data["paths"]["key_mapping_file"] = config.keyMappingFile;
     data["paths"]["assets_config_file"] = config.assetsConfigFile;
+    data["paths"]["recordings_directory"] = config.recordingsDir;
+    data["paths"]["knn_dataset_file"] = config.knnDatasetFile;
 
     data["display"]["window_name"] = config.windowName;
     data["display"]["uiWindowWidth"] = config.uiWindowWidth;
     data["display"]["uiWindowHeight"] = config.uiWindowHeight;
+    data["display"]["preview_fps"] = config.previewFps;
+    data["display"]["auto_mode_start"] = config.autoModeStart;
+    data["display"]["blackout_on_start"] = config.blackoutOnStart;
 
     data["ableton_link"]["phrase_length"] = config.phraseLength;
     data["ableton_link"]["default_bpm"] = config.default_bpm;
@@ -174,6 +185,7 @@ bool ConfigManager::saveConfig() const {
 
     data["bpm_calibration"]["slope"] = config.bpmCalibration.slope;
     data["bpm_calibration"]["intercept"] = config.bpmCalibration.intercept;
+    data["bpm_calibration"]["min_bpm_threshold"] = config.bpmCalibration.minBpmThreshold;
     data["bpm_calibration"]["points"] = json::array();
     for (const auto& pt : config.bpmCalibration.points) {
         data["bpm_calibration"]["points"].push_back({

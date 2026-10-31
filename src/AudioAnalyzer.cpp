@@ -155,6 +155,11 @@ AudioMetrics AudioAnalyzer::getMetrics() {
     return copy;
 }
 
+AudioMetrics AudioAnalyzer::getLatestMetrics() const {
+    std::lock_guard<std::mutex> lock(const_cast<std::mutex&>(metricsMutex));
+    return currentMetrics;
+}
+
 int AudioAnalyzer::audioCallback(void* outputBuffer, void* inputBuffer, unsigned int nBufferFrames,
                                  double streamTime, RtAudioStreamStatus status, void* userData) {
     if (inputBuffer == nullptr || userData == nullptr) return 0;
