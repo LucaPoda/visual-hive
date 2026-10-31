@@ -182,4 +182,25 @@ std::vector<std::string> openMultipleFilesDialog(const std::string& title, const
     return selectedFiles;
 }
 
+#define GLFW_EXPOSE_NATIVE_COCOA
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+
+void configureProjectorWindowNative(GLFWwindow* window) {
+    if (!window) return;
+    @autoreleasepool {
+        NSWindow* nsWin = glfwGetCocoaWindow(window);
+        if (nsWin) {
+            // Impedisce che la finestra venga nascosta o minimizzata quando l'app perde il focus
+            [nsWin setHidesOnDeactivate:NO];
+            // La finestra partecipa a tutti gli spazi e non viene esclusa da Mission Control
+            [nsWin setCollectionBehavior:NSWindowCollectionBehaviorCanJoinAllSpaces | 
+                                         NSWindowCollectionBehaviorFullScreenAuxiliary];
+            // Livello sopra la barra dei menu e il dock sullo schermo esterno
+            [nsWin setLevel:NSMainMenuWindowLevel + 1];
+            [nsWin setHasShadow:NO];
+        }
+    }
+}
+
 #endif // __APPLE__

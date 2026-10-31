@@ -1,5 +1,6 @@
 // GraphicsManager.cpp
 #include "GraphicsManager.h"
+#include "Logger.h"
 #include <cmath>
 #include <iostream>
 #include <filesystem>
@@ -48,6 +49,27 @@ GraphicsManager::GraphicsManager(const AppConfig& config, const DisplayInfo& dis
     
     ImGui_ImplGlfw_InitForOpenGL(uiWindow, true);
     ImGui_ImplOpenGL3_Init("#version 150"); 
+
+    // Rileva monitor e se il display selezionato e' secondario (o se ci sono piu' monitor),
+    // inizializza automaticamente la finestra di proiezione borderless fissa sullo schermo esterno.
+    int count = 0;
+    GLFWmonitor** monitors = glfwGetMonitors(&count);
+    int targetIdx = -1;
+    for (int i = 0; i < count; ++i) {
+        int mx = 0, my = 0;
+        glfwGetMonitorPos(monitors[i], &mx, &my);
+        if (mx == display.x && my == display.y) {
+            targetIdx = i;
+            break;
+        }
+    }
+    if (targetIdx < 0 && count > 1) {
+        targetIdx = 1;
+    }
+    
+    if (targetIdx >= 0 && (count > 1 || !display.isPrimary)) {
+        createProjectorWindow(targetIdx);
+    }
 }
 
 GraphicsManager::~GraphicsManager() {
@@ -131,12 +153,27 @@ void GraphicsManager::createProjectorWindow(int monitorIndex) {
     displayWidth = mode->width;
     displayHeight = mode->height;
 
+    int xpos = 0, ypos = 0;
+    glfwGetMonitorPos(monitor, &xpos, &ypos);
+
     glfwWindowHint(GLFW_DECORATED, GLFW_FALSE);
-    projectorWindow = glfwCreateWindow(displayWidth, displayHeight, windowName.c_str(), monitor, uiWindow);
+    glfwWindowHint(GLFW_AUTO_ICONIFY, GLFW_FALSE);
+    glfwWindowHint(GLFW_FLOATING, GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUS_ON_SHOW, GLFW_FALSE);
+
+    // Creiamo una finestra borderless posizionata sul monitor specificato (NULL = windowed mode)
+    // In questo modo la finestra rimane fissa sul secondo schermo e NON viene ridotta a icona
+    // quando l'utente interagisce con la finestra principale della regia.
+    projectorWindow = glfwCreateWindow(displayWidth, displayHeight, windowName.c_str(), NULL, uiWindow);
     if (!projectorWindow) {
         std::cerr << "[ERROR] Impossibile creare la finestra del proiettore GLFW!" << std::endl;
         return;
     }
+
+    glfwSetWindowPos(projectorWindow, xpos, ypos);
+
+    // Configurazione nativa (AppKit su macOS) per bloccare la finestra e non nasconderla
+    configureProjectorWindowNative(projectorWindow);
 
     setupProjectorQuad();
     glfwMakeContextCurrent(uiWindow);
@@ -187,8 +224,9 @@ void GraphicsManager::setupProjectorQuad() {
 void GraphicsManager::UpdateGLTexture(const cv::Mat& mat, GLuint& textureID) {
     if (mat.empty()) return;
     
-    cv::Mat rgbaMat;
-    if(mat.channels() == 3) {
+    // Riutilizza il buffer di conversione per thread per evitare continue allocazioni su heap a 60 FPS
+    thread_local cv::Mat rgbaMat;
+    if (mat.channels() == 3) {
         cv::cvtColor(mat, rgbaMat, cv::COLOR_BGR2RGBA);
     } else if (mat.channels() == 4) {
         cv::cvtColor(mat, rgbaMat, cv::COLOR_BGRA2RGBA);
@@ -211,13 +249,15 @@ void GraphicsManager::UpdateGLTexture(const cv::Mat& mat, GLuint& textureID) {
 
 void GraphicsManager::drawPaletteSquare(const std::string& primary, const std::string& secondary, float size) {
     auto getCol32 = [](const std::string& name) -> ImU32 {
-        if (name == "White") return IM_COL32(255, 255, 255, 255);
-        if (name == "Red") return IM_COL32(255, 0, 0, 255);
-        if (name == "Green") return IM_COL32(0, 255, 0, 255);
-        if (name == "Blue") return IM_COL32(0, 0, 255, 255);
-        if (name == "Cyan") return IM_COL32(0, 255, 255, 255);
-        if (name == "Magenta") return IM_COL32(255, 0, 255, 255);
-        if (name == "Yellow") return IM_COL32(255, 255, 0, 255);
+        if (name == "White" || name == "Bianco") return IM_COL32(255, 255, 255, 255);
+        if (name == "Black" || name == "Nero") return IM_COL32(20, 20, 20, 255);
+        if (name == "Red" || name == "Rosso") return IM_COL32(240, 30, 30, 255);
+        if (name == "Green" || name == "Verde") return IM_COL32(40, 210, 60, 255);
+        if (name == "Blue" || name == "Blu") return IM_COL32(40, 110, 240, 255);
+        if (name == "Cyan" || name == "Ciano") return IM_COL32(0, 230, 230, 255);
+        if (name == "Magenta" || name == "Viola" || name == "Purple") return IM_COL32(180, 40, 210, 255);
+        if (name == "Yellow" || name == "Giallo") return IM_COL32(245, 230, 30, 255);
+        if (name == "Orange" || name == "Arancione") return IM_COL32(255, 140, 20, 255);
         return IM_COL32(128, 128, 128, 255);
     };
 
@@ -277,7 +317,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::Begin("Dashboard", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove);
     
     ImVec2 contentAvail = ImGui::GetContentRegionAvail();
-    float topHeight = contentAvail.y * 0.40f + 25.0f;
+    float topHeight = std::clamp(contentAvail.y * 0.44f, 280.0f, 520.0f);
     float bottomHeight = contentAvail.y - topHeight - 37.0f;
     
     ImGui::Text("=== SISTEMA DI REGIA VJ ===");
@@ -285,13 +325,22 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::BeginChild("TopArea", ImVec2(0, topHeight), false);
     ImGui::Columns(2, "TopColumns", false);
-    ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.70f);
+    ImGui::SetColumnWidth(0, ImGui::GetWindowWidth() * 0.68f);
     
     ImGui::BeginChild("PreviewsArea", ImVec2(0, 0), true);
     
     float availWidth = ImGui::GetContentRegionAvail().x;
-    float previewWidth = (availWidth / 2.0f) - 10.0f;
+    float availHeight = ImGui::GetContentRegionAvail().y;
+    // Calcolo reattivo che rispetta rigorosamente il formato 16:9 senza overflow verticale
+    float maxPreviewW = (availWidth - 16.0f) / 2.0f;
+    float maxPreviewH = std::max(60.0f, availHeight - 75.0f);
+    
+    float previewWidth = maxPreviewW;
     float previewHeight = previewWidth * (9.0f / 16.0f);
+    if (previewHeight > maxPreviewH) {
+        previewHeight = maxPreviewH;
+        previewWidth = previewHeight * (16.0f / 9.0f);
+    }
     
     ImGui::Columns(2, "CueLiveCols", false);
     
@@ -305,8 +354,15 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Columns(1);
     
-    ImGui::Dummy(ImVec2(0, 10));
-    if (ImGui::Button("Transizione CUE -> LIVE (INVIO)", ImVec2(-1, 30))) state.transitionCueToLive();
+    ImGui::Dummy(ImVec2(0, 8));
+    float btnWidth = (ImGui::GetContentRegionAvail().x - 10.0f) * 0.5f;
+    if (ImGui::Button("Transizione CUE -> LIVE (INVIO)", ImVec2(btnWidth, 30))) {
+        state.transitionCueToLive();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Applica Foreground (Mantieni Auto)", ImVec2(btnWidth, 30))) {
+        state.applyCueForegroundToLive();
+    }
     
     ImGui::EndChild();
     
@@ -322,6 +378,21 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     static int monitorCount = 0;
     static GLFWmonitor** availableMonitors = glfwGetMonitors(&monitorCount);
     static int currentMonitorIdx = -1;
+    
+    if (currentMonitorIdx == -1 && projectorWindow != nullptr) {
+        int px = 0, py = 0;
+        glfwGetWindowPos(projectorWindow, &px, &py);
+        for (int i = 0; i < monitorCount; ++i) {
+            int mx = 0, my = 0;
+            glfwGetMonitorPos(availableMonitors[i], &mx, &my);
+            if (mx == px && my == py) {
+                currentMonitorIdx = i;
+                break;
+            }
+        }
+    } else if (projectorWindow == nullptr) {
+        currentMonitorIdx = -1;
+    }
     
     std::string monitorPreviewText = (currentMonitorIdx >= 0 && currentMonitorIdx < monitorCount) 
                                       ? glfwGetMonitorName(availableMonitors[currentMonitorIdx]) 
@@ -371,6 +442,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             bool isSelected = (currentDeviceName == device.name);
             if (ImGui::Selectable(device.name.c_str(), isSelected)) {
                 currentDeviceName = device.name;
+                if (audioAnalyzer.isRecordingActive()) {
+                    audioAnalyzer.stopRecording();
+                }
                 audioAnalyzer.stop();
                 audioAnalyzer.start(device.id);
             }
@@ -436,21 +510,22 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     drawDbMeter("R", audioData.peakR, peakHoldR);
 
     ImGui::Dummy(ImVec2(0.0f, 5.0f));
-    static bool isRecording = false;
-    static std::chrono::steady_clock::time_point recStart;
-    if (!isRecording) {
+    if (!audioAnalyzer.isRecordingActive()) {
         if (ImGui::Button("Inizia Registrazione")) {
-            isRecording = true;
-            recStart = std::chrono::steady_clock::now();
+            auto t = std::time(nullptr);
+            auto tm = *std::localtime(&t);
+            char timeBuf[64];
+            std::strftime(timeBuf, sizeof(timeBuf), "rec_%Y%m%d_%H%M%S", &tm);
+            audioAnalyzer.startRecording(timeBuf);
         }
     } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
         if (ImGui::Button("Stop Registrazione")) {
-            isRecording = false;
+            audioAnalyzer.stopRecording();
         }
+        ImGui::PopStyleColor();
         ImGui::SameLine();
-        auto diff = std::chrono::steady_clock::now() - recStart;
-        auto secs = std::chrono::duration_cast<std::chrono::seconds>(diff).count();
-        ImGui::Text("Rec: %02lld:%02lld", secs / 60, secs % 60);
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "Rec: %s", audioAnalyzer.getRecordingTimeFormatted().c_str());
     }
     ImGui::SameLine();
     if (ImGui::Button("Apri Cartella")) {
@@ -539,18 +614,36 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::PopStyleColor();
     ImGui::Separator();
     
-    ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
+    bool autoModeVal = state.isAutoMode;
+    if (ImGui::Checkbox("Auto Mode (M)", &autoModeVal)) {
+        if (autoModeVal) {
+            state.activateAutoModeImmediate(assetMgr.getAssets());
+            LOG_INFO("UI", "Auto Mode attivata da UI: cambio immediato eseguito.");
+        } else {
+            state.isAutoMode = false;
+            LOG_INFO("UI", "Auto Mode disattivata da UI.");
+        }
+    }
     ImGui::SameLine();
 
     // Import/Dataset
     static std::vector<std::string> datasetFiles;
-    static std::string currentDataset = "knn_dataset.csv";
+    static std::string currentDataset = "new_dataset_14_feature.csv";
     static bool needDatasetRefresh = true;
     if (needDatasetRefresh) {
         datasetFiles.clear();
-        for (const auto& entry : fs::directory_iterator("datasets")) {
-            if (entry.path().extension() == ".csv") {
-                datasetFiles.push_back(entry.path().filename().string());
+        if (fs::exists("datasets")) {
+            for (const auto& entry : fs::directory_iterator("datasets")) {
+                if (entry.path().extension() == ".csv") {
+                    datasetFiles.push_back(entry.path().filename().string());
+                }
+            }
+        }
+        if (!fs::exists("datasets/" + currentDataset)) {
+            if (fs::exists("datasets/knn_dataset.csv")) {
+                currentDataset = "knn_dataset.csv";
+            } else if (!datasetFiles.empty()) {
+                currentDataset = datasetFiles[0];
             }
         }
         needDatasetRefresh = false;
@@ -710,10 +803,26 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                                 else tex = getOrCreateThumbnail(key, bg.get_first_frame(), false);
                                 
                                 ImGui::PushID(key.c_str());
-                                if (itemCount > 0 && itemCount % 2 != 0) ImGui::SameLine();
+                                float btnW = 160.0f;
+                                if (itemCount > 0) {
+                                    float lastX2 = ImGui::GetItemRectMax().x;
+                                    float nextX2 = lastX2 + ImGui::GetStyle().ItemSpacing.x + btnW;
+                                    if (nextX2 <= ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) {
+                                        ImGui::SameLine();
+                                    }
+                                }
                                 
                                 ImVec2 p = ImGui::GetCursorScreenPos();
-                                if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) state.switchCueBackground(bg);
+                                if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) {
+                                    if (ImGui::GetIO().KeyShift || isShiftDown()) {
+                                        state.switchBackground(bg);
+                                        state.isAutoMode = false;
+                                        LOG_INFO("UI", "Shift+Click su BG: mandato in LIVE (Auto Mode disattivata).");
+                                    } else {
+                                        state.switchCueBackground(bg);
+                                        LOG_INFO("UI", "Click su BG: mandato in CUE.");
+                                    }
+                                }
                                 if (ImGui::IsItemHovered()) {
                                     isAnyHovered = true;
                                     std::string fullPath = bg.get_full_path();
@@ -724,6 +833,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                                     }
                                     if (ImGui::GetTime() - hoverStartTime > 0.4) {
                                         ImGui::BeginTooltip();
+                                        ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.6f, 1.0f), "Click: CUE | SHIFT+Click: LIVE");
                                         if (currentHoverPath != fullPath) {
                                             hoverCap.release();
                                             hoverCap.open(fullPath);
@@ -815,8 +925,23 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         }
         
         ImGui::PushID(key.c_str());
-        if (itemCount > 0 && itemCount % 2 != 0) ImGui::SameLine();
-        if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) state.switchCueForeground(fg);
+        float btnW = 160.0f;
+        if (itemCount > 0) {
+            float lastX2 = ImGui::GetItemRectMax().x;
+            float nextX2 = lastX2 + ImGui::GetStyle().ItemSpacing.x + btnW;
+            if (nextX2 <= ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x) {
+                ImGui::SameLine();
+            }
+        }
+        if (ImGui::ImageButton((void*)(intptr_t)tex, ImVec2(160, 90))) {
+            if (ImGui::GetIO().KeyShift || isShiftDown()) {
+                state.switchForeground(fg);
+                LOG_INFO("UI", "Shift+Click su FG: mandato in LIVE.");
+            } else {
+                state.switchCueForeground(fg);
+                LOG_INFO("UI", "Click su FG: mandato in CUE.");
+            }
+        }
         if (ImGui::IsItemHovered()) {
             isAnyHovered = true;
             std::string fullPath = fg.get_full_path();
@@ -826,6 +951,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             }
             if (ImGui::GetTime() - hoverStartTime > 0.4) {
                 ImGui::BeginTooltip();
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.6f, 1.0f), "Click: CUE | SHIFT+Click: LIVE");
                 ImVec2 canvasSize(320, 180);
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1862,7 +1988,11 @@ void GraphicsManager::showLive(const cv::Mat& frame, bool isBlackout) {
 }
 
 bool GraphicsManager::shouldCloseUI() const {
-    return glfwWindowShouldClose(uiWindow) || (projectorWindow && glfwWindowShouldClose(projectorWindow));
+    if (projectorWindow && glfwWindowShouldClose(projectorWindow)) {
+        glfwDestroyWindow(projectorWindow);
+        const_cast<GraphicsManager*>(this)->projectorWindow = nullptr;
+    }
+    return glfwWindowShouldClose(uiWindow);
 }
 
 cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int targetHeight, const cv::Scalar& bgColor) {
@@ -1870,6 +2000,12 @@ cv::Mat GraphicsManager::scaleToFit(const cv::Mat& src, int targetWidth, int tar
     int srcWidth = src.cols;
     int srcHeight = src.rows;
     if (srcWidth == 0 || srcHeight == 0) return cv::Mat(targetHeight, targetWidth, src.type(), bgColor);
+
+    // Se la dimensione corrisponde esattamente a quella richiesta, salta resize e allocazioni
+    if (srcWidth == targetWidth && srcHeight == targetHeight) {
+        return src;
+    }
+
     double scaleWidth = static_cast<double>(targetWidth) / srcWidth;
     double scaleFactor = scaleWidth;
     int newWidth = static_cast<int>(std::ceil(srcWidth * scaleFactor));
@@ -1926,11 +2062,12 @@ cv::Mat GraphicsManager::composeFrame(RuntimeState& state, AssetManager& assetMg
 }
 
 cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& assetMgr, double scale) {
-    if (!state.cueBackground.has_value()) {
+    if (!state.cueBackground.has_value() && !state.cueForeground.has_value()) {
         return cv::Mat(displayHeight, displayWidth, CV_8UC3, cv::Scalar(0, 0, 0));
     }
 
-    Background& bgToUse = state.cueBackground.value();
+    bool hasCueBg = state.cueBackground.has_value();
+    Background& bgToUse = hasCueBg ? state.cueBackground.value() : state.activeBackground;
     cv::Mat bgFrame;
 
     if (state.activeBackground.get_source() == bgToUse.get_source()) {
@@ -1944,8 +2081,9 @@ cv::Mat GraphicsManager::composeCueFrame(RuntimeState& state, AssetManager& asse
     }
     cv::Mat outputFrame = scaleToFit(bgFrame, displayWidth, displayHeight);
 
-    if (!bgToUse.get_force_no_foreground() && state.cueForeground.has_value()) {
-        Foreground& fgToUse = state.cueForeground.value();
+    if (!bgToUse.get_force_no_foreground()) {
+        bool hasCueFg = state.cueForeground.has_value();
+        Foreground& fgToUse = hasCueFg ? state.cueForeground.value() : state.activeForeground;
         cv::Mat fgFrame;
         if (state.activeForeground.get_foreground_path() == fgToUse.get_foreground_path()) {
             fgFrame = state.activeForeground.get_current_frame();

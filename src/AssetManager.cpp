@@ -172,7 +172,7 @@ cv::Mat Background::get_next_frame() {
                 this->video_loop_cap >> currentVideoFrame;
             }
             lastVideoFrameTime = currentTick;
-            return currentVideoFrame.clone();
+            return currentVideoFrame;
         }
         double elapsedTime_ms = (currentTick - lastVideoFrameTime) * 1000.0 / cv::getTickFrequency();
         double target_fps = this->get_fps();
@@ -187,7 +187,7 @@ cv::Mat Background::get_next_frame() {
             }
             lastVideoFrameTime = currentTick;
         }
-        return currentVideoFrame.clone();
+        return currentVideoFrame;
     }
     else if (this->type == WINDOW_CAPTURE) {
         cv::Mat frame = getLatestWindowFrame();

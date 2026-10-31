@@ -86,7 +86,17 @@ struct RuntimeState {
     SongDynamic lastWinner = BUILD;        // Tiene traccia del leader in gara per il tempo di attesa
     float fractionalWaitCounter = 0.0f;    // Tempo trascorso in attesa del cambio
 
-    RuntimeState(AssetManager& assetManager);
+    // Parametri Debounce Configurabili (da AppConfig)
+    int debounceVerse = 10;
+    int debounceBuild = 8;
+    int debounceChorus = 6;
+    float minHoldBeats = 12.0f; // Almeno 12 beat prima di cambiare visual in auto (tranne drop)
+
+    // Memoria anti-oscillazione
+    SongDynamic previousDynamicTarget = BUILD;
+    float beatsSinceTargetChange = 0.0f;
+
+    RuntimeState(AssetManager& assetManager, const AppConfig* config = nullptr);
     ~RuntimeState(); 
     
     void startAiLogging(const std::string& filename);
@@ -101,6 +111,8 @@ struct RuntimeState {
     
     void triggerAutoSwitch(const AssetsConfig& assets);
     void transitionCueToLive();
+    void applyCueForegroundToLive();
+    void activateAutoModeImmediate(const AssetsConfig& assets);
 
     bool hasActiveCue() const;
     

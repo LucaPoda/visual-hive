@@ -31,3 +31,7 @@ cv::Mat getLatestWindowFrame();
 
 // Native File Picker per Import Multiplo
 std::vector<std::string> openMultipleFilesDialog(const std::string& title, const std::vector<std::string>& allowedExtensions);
+
+// Configurazione nativa finestra proiettore (fissa e non minimizzabile)
+struct GLFWwindow;
+void configureProjectorWindowNative(GLFWwindow* window);

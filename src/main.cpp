@@ -25,6 +25,7 @@
 #include "GraphicsManager.h"
 #include "AudioAnalyzer.h"
 #include "KNNClassifier.h" 
+#include "Logger.h"
 
 namespace fs = std::filesystem;
 
@@ -41,6 +42,9 @@ std::string getSongDynamicLabel(SongDynamic level) {
 KNNClassifier knnClassifier(21); 
 
 int main() {
+    Logger::getInstance().init("logs");
+    LOG_INFO("Main", "=== Avvio Visual-Hive VJ System ===");
+
     if (!fs::exists("datasets")) {
         fs::create_directory("datasets");
     }
@@ -74,21 +78,29 @@ int main() {
     AssetManager assetManager(config);
     assetManager.initializeAssets();
 
-    if (fs::exists("datasets/knn_dataset.csv")) {
-        knnClassifier.loadDataset("datasets/knn_dataset.csv");
+    std::string datasetPath = "";
+    if (fs::exists("datasets/new_dataset_14_feature.csv")) {
+        datasetPath = "datasets/new_dataset_14_feature.csv";
+    } else if (fs::exists("datasets/knn_dataset.csv")) {
+        datasetPath = "datasets/knn_dataset.csv";
+    } else if (fs::exists("datasets/knn_dataset_clean.csv")) {
+        datasetPath = "datasets/knn_dataset_clean.csv";
+    }
+
+    if (!datasetPath.empty()) {
+        knnClassifier.loadDataset(datasetPath);
+        LOG_INFO("Main", "Dataset caricato: " + datasetPath + " (" + std::to_string(knnClassifier.getDatasetSize()) + " campioni)");
     }
 
     AudioAnalyzer audioAnalyzer;
     audioAnalyzer.start(0, config.audioSampleRate, config.audioBufferFrames);
 
-    std::cout << "[INFO] Waiting for audio warmup (2 seconds)...\n";
+    LOG_INFO("Main", "In attesa warmup audio (1 secondo)...");
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
-    int beatsSinceLastChange = 0;
-
     try {
-        RuntimeState state(assetManager);
-        std::cout << "[INFO] System initialized. Starting loop.\n";
+        RuntimeState state(assetManager, &config);
+        LOG_INFO("Main", "Sistema inizializzato con successo. Avvio main render loop.");
 
         // --- TIMERS E ACCUMULATORI FUORI DAL CICLO WHILE ---
         auto lastAudioTime = std::chrono::steady_clock::now();
@@ -106,10 +118,6 @@ int main() {
             graphics.beginDashboard();
 
             AudioMetrics audioData = audioAnalyzer.getMetrics();
-            
-            if (audioData.isBeat) {
-                beatsSinceLastChange++;
-            }
 
             // 1. MAX POOLING: Tratteniamo i picchi massimi estratti a 86 Hz
             peakAccumulator.rms = std::max(peakAccumulator.rms, audioData.rms);
@@ -212,11 +220,24 @@ int main() {
 
                 // L'esecuzione (cambio visual) avviene SOLO in Auto Mode
                 if (state.isAutoMode) {
-                    if (prevTarget != state.currentSongDynamicTarget) {
-                        state.triggerAutoSwitch(assetManager.getAssets());
+                    bool targetChanged = (prevTarget != state.currentSongDynamicTarget);
+                    
+                    // Un cambio dinamico avviene se:
+                    // 1) Il target e' cambiato E la grafica attuale e' rimasta attiva per almeno minHoldBeats
+                    //    oppure se e' un passaggio drammatico BUILD -> CHORUS (drop)
+                    bool isDramaticDrop = (targetChanged && state.currentSongDynamicTarget == CHORUS && prevTarget == BUILD);
+
+                    if (targetChanged) {
+                        if (state.beatsSinceLastChange >= state.minHoldBeats || isDramaticDrop) {
+                            state.triggerAutoSwitch(assetManager.getAssets());
+                        }
                     } 
                     else if (state.masterPhraseBeats >= 32.0f) {
-                        if (state.beatsSinceLastChange >= 24) state.triggerAutoSwitch(assetManager.getAssets()); 
+                        // All'interno della stessa sezione, cambia visual ogni frase musicale (32 beat = 8 battute)
+                        // solo se la visual attuale e' stata mostrata per almeno 24 beat
+                        if (state.beatsSinceLastChange >= 24) {
+                            state.triggerAutoSwitch(assetManager.getAssets()); 
+                        }
                         state.masterPhraseBeats -= 32.0f; 
                     }
                 }
@@ -238,7 +259,7 @@ int main() {
             if (state.isAutoMode) {
                 if (std::chrono::duration_cast<std::chrono::seconds>(nowTime - lastAudioTime).count() >= 60) {
                     state.isAutoMode = false;
-                    std::cout << "[WARNING] Auto Mode disattivato (Assenza di segnale audio per 60 secondi).\n";
+                    LOG_WARN("Main", "Auto Mode disattivato (Assenza di segnale audio per 60 secondi).");
                 }
             }
 
@@ -248,14 +269,10 @@ int main() {
             if (ImGui::IsKeyPressed(ImGuiKey_M)) {
                 if (state.isAutoMode) {
                     state.isAutoMode = false;
+                    LOG_INFO("Main", "Auto Mode disattivata tramite tastiera (M).");
                 } else {
-                    if (audioActive) {
-                        state.isAutoMode = true;
-                        beatsSinceLastChange = 0;
-                        state.triggerAutoSwitch(assetManager.getAssets()); // <- CORREZIONE: Cambio immediato
-                    } else {
-                        std::cout << "[WARNING] Impossibile attivare Auto Mode: Nessun audio rilevato.\n";
-                    }
+                    LOG_INFO("Main", "Auto Mode attivata tramite tastiera (M).");
+                    state.activateAutoModeImmediate(assetManager.getAssets());
                 }
             }
             
@@ -272,17 +289,25 @@ int main() {
                 auto bg = assetManager.getBackroundByPressedKey(keyChar);
                 auto fg = assetManager.getForegroundByPressedKey(keyChar);
 
-                // <- CORREZIONE: Cue sui background disabilitato in Auto Mode
-                if (bg.has_value() && !state.isAutoMode) {
-                    if (isShiftPressed) state.switchCueBackground(bg.value());
-                    else {
+                if (bg.has_value()) {
+                    if (isShiftPressed) {
                         state.switchBackground(bg.value());
-                        beatsSinceLastChange = 0; 
+                        state.beatsSinceLastChange = 0; 
+                        state.isAutoMode = false;
+                        LOG_INFO("Main", "Tastiera SHIFT: inviato BG in LIVE (Auto Mode disattivata).");
+                    } else {
+                        state.switchCueBackground(bg.value());
+                        LOG_INFO("Main", "Tastiera: inviato BG in CUE.");
                     }
                 } 
                 if (fg.has_value()) {
-                    if (isShiftPressed) state.switchCueForeground(fg.value());
-                    else state.switchForeground(fg.value());
+                    if (isShiftPressed) {
+                        state.switchForeground(fg.value());
+                        LOG_INFO("Main", "Tastiera SHIFT: inviato FG in LIVE.");
+                    } else {
+                        state.switchCueForeground(fg.value());
+                        LOG_INFO("Main", "Tastiera: inviato FG in CUE.");
+                    }
                 }
             };
 
@@ -313,9 +338,10 @@ int main() {
         }
 
     } catch (const std::exception& e) {
-        std::cerr << "Fatal Error: " << e.what() << std::endl;
+        LOG_ERROR("Main", std::string("Fatal Error: ") + e.what());
         return 1;
     }
 
+    LOG_INFO("Main", "Visual-Hive terminato normalmente.");
     return 0;
 }

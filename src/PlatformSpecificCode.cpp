@@ -1,4 +1,5 @@
 #include "PlatformSpecificCode.h"
+#include "Logger.h"
 #include <iostream>
 #include <iomanip>   // For std::setw and std::left
 
@@ -97,43 +98,36 @@ DisplayInfo selectTargetDisplay() {
     std::vector<DisplayInfo> displays = getConnectedDisplays();
 
     if (displays.empty()) {
-        std::cerr << "No displays detected. Exiting.\n";
-        exit(1);
+        LOG_ERROR("Display", "No displays detected on system. Using fallback display.");
+        DisplayInfo fallback;
+        fallback.id = 1;
+        fallback.width = 1920;
+        fallback.height = 1080;
+        fallback.x = 0;
+        fallback.y = 0;
+        fallback.isPrimary = true;
+        fallback.name = "Fallback Display";
+        return fallback;
     }
 
-    int selectedDisplayId = -1;
-    if (displays.size() == 1) {
-        selectedDisplayId = displays[0].id;
-        std::cout << std::endl << "[INFO] Only one display found, selecting it automatically.\n";
-    } else {
-        std::cout << "[INFO] Enter the ID of the display you want to use for visuals: ";
-        std::cin >> selectedDisplayId;
-        if (std::cin.fail()) {
-            std::cerr << "[ERROR] Invalid input. Please enter a number. Exiting.\n";
-            exit(1);
+    // Selezione automatica senza input da terminale:
+    // Se c'e' piu' di uno schermo, seleziona automaticamente lo schermo secondario (non primario),
+    // tipicamente destinato al proiettore/schermo esterno nei visual per eventi live.
+    // L'utente puo' sempre cambiare monitor in qualsiasi istante dalla GUI.
+    DisplayInfo targetDisplay = displays[0];
+    if (displays.size() > 1) {
+        for (const auto& d : displays) {
+            if (!d.isPrimary) {
+                targetDisplay = d;
+                break;
+            }
         }
     }
 
-    // Find the selected display info
-    DisplayInfo targetDisplay;
-    bool found = false;
-    for (const auto& d : displays) {
-        if (d.id == selectedDisplayId) {
-            targetDisplay = d;
-            found = true;
-            break;
-        }
-    }
-
-    if (!found) {
-        std::cerr << "[ERROR] Display with ID " << selectedDisplayId << " not found. Exiting.\n";
-        exit(1);
-    }
-
-    std::cout << "[INFO] Selected display: " << targetDisplay.name
-              << " (" << targetDisplay.width << "x" << targetDisplay.height << " pixels"
-              << " at (" << targetDisplay.x << ", " << targetDisplay.y << "))\n";
-
+    std::stringstream ss;
+    ss << "Selected display for visuals: ID " << targetDisplay.id << " (" << targetDisplay.name << ") "
+       << targetDisplay.width << "x" << targetDisplay.height << " at (" << targetDisplay.x << "," << targetDisplay.y << ")";
+    LOG_INFO("Display", ss.str());
 
     return targetDisplay;
 }
@@ -163,3 +157,9 @@ bool isShiftDown() {
     #endif
     return shift;
 }
+
+#ifndef __APPLE__
+void configureProjectorWindowNative(GLFWwindow* window) {
+    // Fallback generico per Windows/Linux se necessario
+}
+#endif

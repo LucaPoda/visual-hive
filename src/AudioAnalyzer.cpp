@@ -12,21 +12,23 @@ const double PI = 3.14159265358979323846;
 typedef std::complex<float> Complex;
 
 // Header Standard WAV (32-bit Float)
+#pragma pack(push, 1)
 struct WavHeader {
     char riff[4] = {'R','I','F','F'};
-    uint32_t fileSize;
+    uint32_t fileSize = 36;
     char wave[4] = {'W','A','V','E'};
     char fmt[4] = {'f','m','t',' '};
     uint32_t fmtSize = 16;
     uint16_t audioFormat = 3; // 3 = IEEE Float
-    uint16_t numChannels = 1; // Mono
+    uint16_t numChannels = 2; // Stereo
     uint32_t sampleRate = 44100;
-    uint32_t byteRate = 44100 * 1 * 4;
-    uint16_t blockAlign = 4;
+    uint32_t byteRate = 44100 * 2 * 4;
+    uint16_t blockAlign = 8;
     uint16_t bitsPerSample = 32;
     char data[4] = {'d','a','t','a'};
-    uint32_t dataSize;
+    uint32_t dataSize = 0;
 };
+#pragma pack(pop)
 
 void computeFFT(std::vector<Complex>& x) {
     size_t N = x.size();
@@ -342,14 +344,23 @@ void AudioAnalyzer::openNextWavFile() {
     
     currentRecordFile = "recordings/" + recordBasePath + "_part" + std::to_string(recordPartIndex++) + ".wav";
     currentWavFile.open(currentRecordFile, std::ios::binary);
+    if (!currentWavFile.is_open()) {
+        std::cerr << "[AUDIO] ERRORE: Impossibile creare file di registrazione " << currentRecordFile << std::endl;
+        return;
+    }
     
     WavHeader header;
-    header.numChannels = 2; // Hardcode Stereo
-    header.byteRate = sampleRate * 2 * 4; 
-    header.blockAlign = 8; // 2 canali * 4 byte
+    header.sampleRate = sampleRate;
+    header.numChannels = 2; // Stereo
+    header.byteRate = sampleRate * 2 * sizeof(float); 
+    header.blockAlign = 2 * sizeof(float); // 8 byte
+    header.bitsPerSample = 32;
+    header.dataSize = 0;
+    header.fileSize = 36;
     
     currentWavFile.write(reinterpret_cast<const char*>(&header), sizeof(WavHeader));
     currentFileSamples = 0;
+    std::cout << "[AUDIO] Iniziata registrazione: " << currentRecordFile << " (" << sampleRate << " Hz, Stereo 32-bit Float)\n";
 }
 
 void AudioAnalyzer::closeCurrentWavFile() {
@@ -357,15 +368,19 @@ void AudioAnalyzer::closeCurrentWavFile() {
         currentWavFile.seekp(0, std::ios::beg);
         WavHeader header;
         header.sampleRate = sampleRate;
-        header.numChannels = 2; // Hardcode Stereo
-        header.byteRate = sampleRate * 2 * 4;
-        header.blockAlign = 8;
+        header.numChannels = 2; // Stereo
+        header.byteRate = sampleRate * 2 * sizeof(float);
+        header.blockAlign = 2 * sizeof(float);
+        header.bitsPerSample = 32;
         
-        header.dataSize = currentFileSamples * 4;
+        header.dataSize = currentFileSamples * sizeof(float);
         header.fileSize = 36 + header.dataSize;
         
         currentWavFile.write(reinterpret_cast<const char*>(&header), sizeof(WavHeader));
+        currentWavFile.flush();
         currentWavFile.close();
+        std::cout << "[AUDIO] Registrazione completata: " << currentRecordFile 
+                  << " (" << (header.dataSize / 1024) << " KB)\n";
     }
 }
 

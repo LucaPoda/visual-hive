@@ -1,10 +1,11 @@
 #include "RuntimeState.h"
+#include "Logger.h"
 #include <opencv2/core/utility.hpp> 
 #include <stdexcept>
 #include <chrono>
 #include <algorithm>
 
-RuntimeState::RuntimeState(AssetManager& assetManager) 
+RuntimeState::RuntimeState(AssetManager& assetManager, const AppConfig* config) 
     : isBounceActive(false),
       isAnimating(false),
       strobeFrameToggle(false),
@@ -20,6 +21,13 @@ RuntimeState::RuntimeState(AssetManager& assetManager)
       queuedForeground(std::nullopt),
       showReasoningWindow(false)
 {
+    if (config) {
+        debounceVerse = config->debounceVerse > 0 ? config->debounceVerse : 16;
+        debounceBuild = config->debounceBuild > 0 ? config->debounceBuild : 12;
+        debounceChorus = config->debounceChorus > 0 ? config->debounceChorus : 8;
+    }
+    currentPenaltyBeats = debounceBuild;
+
     auto defaultBg = assetManager.getDefaultBackground();
     auto defaultFg = assetManager.getDefaultForeground();
 
@@ -135,6 +143,8 @@ void RuntimeState::switchBackground(const Background& newBg) {
             queuedForeground = std::nullopt;
         }
     }
+    fractionalBeats = 0.0f;
+    beatsSinceLastChange = 0;
 }
 
 void RuntimeState::switchForeground(const Foreground& newFg) {
@@ -206,6 +216,43 @@ void RuntimeState::transitionCueToLive() {
     if (cueForeground.has_value()) {
         activeForeground = cueForeground.value();
     }
+
+    if (isAutoMode) {
+        isAutoMode = false;
+        LOG_INFO("RuntimeState", "Transizione CUE -> LIVE: inviati BG e FG in Live. Auto Mode DISATTIVATA.");
+    } else {
+        LOG_INFO("RuntimeState", "Transizione CUE -> LIVE: inviati BG e FG in Live.");
+    }
+}
+
+void RuntimeState::applyCueForegroundToLive() {
+    if (cueForeground.has_value()) {
+        activeForeground = cueForeground.value();
+        LOG_INFO("RuntimeState", "Applica Foreground: inviato solo FG in Live. Auto Mode rimane attiva.");
+    }
+}
+
+void RuntimeState::activateAutoModeImmediate(const AssetsConfig& assets) {
+    isAutoMode = true;
+    
+    // Determina immediatamente il livello corrente secondo il modello AI
+    int bestIdx = 0;
+    float maxScore = smoothedScores[0];
+    if (smoothedScores[1] > maxScore) { bestIdx = 1; maxScore = smoothedScores[1]; }
+    if (smoothedScores[2] > maxScore) { bestIdx = 2; maxScore = smoothedScores[2]; }
+    
+    currentSongDynamicTarget = (bestIdx == 0) ? VERSE : (bestIdx == 1) ? BUILD : CHORUS;
+    previousDynamicTarget = currentSongDynamicTarget;
+    beatsSinceTargetChange = 0.0f;
+    fractionalBeats = 0.0f;
+    beatsSinceLastChange = 0;
+    fractionalWaitCounter = 0.0f;
+    
+    std::string levelName = (currentSongDynamicTarget == VERSE) ? "VERSE (LOW)" :
+                            (currentSongDynamicTarget == BUILD) ? "BUILD (MID)" : "CHORUS (HIGH)";
+    LOG_INFO("AutoMode", "Attivazione immediata Auto Mode su livello rilevato: " + levelName);
+    
+    triggerAutoSwitch(assets);
 }
 
 bool RuntimeState::hasActiveCue() const {
@@ -309,37 +356,38 @@ void RuntimeState::updateAiStateMachine(const AudioMetrics& incomingMetrics, con
     targetProbabilities[1] = rawProbabilities[BUILD_SNARE] + rawProbabilities[BUILD_ACID] + rawProbabilities[BUILD_MELODIC];
     targetProbabilities[2] = rawProbabilities[DROP_RAW] + rawProbabilities[DROP_MELODIC] + (rawProbabilities[BRIDGE] * bridgeToHighFactor);
 
-    // 7. Cancellazione Reciproca
-    float conflictAmount = std::min(targetProbabilities[0], targetProbabilities[2]);
-    targetProbabilities[0] -= conflictAmount;
-    targetProbabilities[2] -= conflictAmount;
-    targetProbabilities[1] += (conflictAmount * 2.0f);
+    // 7. Normalizzazione Probabilita' (senza cancellazione distruttiva)
+    float targetSum = targetProbabilities[0] + targetProbabilities[1] + targetProbabilities[2];
+    if (targetSum > 0.0001f) {
+        targetProbabilities[0] /= targetSum;
+        targetProbabilities[1] /= targetSum;
+        targetProbabilities[2] /= targetSum;
+    }
 
-    // 8. Filtro Asimmetrico Modulato
-    float base_attack[3]  = {0.50f, 0.60f, 0.95f}; 
-    float base_release[3] = {0.40f, 0.35f, 0.30f}; 
+    beatsSinceTargetChange += beatDelta;
+
+    // 8. Filtro Asimmetrico Modulato Reattivo
+    // Attacco rapido e rilascio controllato per cogliere all'istante i cambi musicali (1-2 battute)
+    // senza cadere in buchi momentanei o rimbalzi caotici
+    float base_attack[3]  = {0.35f, 0.45f, 0.65f}; 
+    float base_release[3] = {0.12f, 0.12f, 0.12f}; 
     for(int i = 0; i < 3; i++) {
-        float alpha = (targetProbabilities[i] > smoothedScores[i]) ? (base_attack[i] * currentConfidence) : (base_release[i] * currentConfidence);
+        float effectiveConf = std::clamp(currentConfidence, 0.40f, 1.0f);
+        float alpha = (targetProbabilities[i] > smoothedScores[i]) 
+                      ? (base_attack[i] * effectiveConf) 
+                      : (base_release[i] * effectiveConf);
         smoothedScores[i] += alpha * (targetProbabilities[i] - smoothedScores[i]);
     }
 
-    // 9. REGOLE HARD-CODED DI REGIA (Bypass Intelligente ottimizzato per 14-Feature KNN)
+    // 9. Bypass Intelligente su Drop ad alta energia (da Build a Chorus)
     bool forceImmediateChange = false;
-    
-    // Soglia abbassata al 75% per compensare la generalizzazione del nuovo modello
-    if (targetProbabilities[2] >= 0.75f && currentConfidence > 0.60f && currentSongDynamicTarget != CHORUS) {
+    if (currentSongDynamicTarget == BUILD && targetProbabilities[2] >= 0.70f && currentConfidence > 0.55f) {
         smoothedScores[2] = 0.95f; 
         forceImmediateChange = true;
     }
-    
-    float pureLowSignal = rawProbabilities[EMPTY_PAD] + rawProbabilities[LIGHT_RHYTHM] + rawProbabilities[VOCAL_AMBIENT];
-    if (currentSongDynamicTarget == CHORUS && pureLowSignal >= 0.75f) {
-        smoothedScores[0] = 0.95f; 
-        forceImmediateChange = true;
-    }
 
-    // 10. OUTPUT CON DEBOUNCING A STADI (Timer tollerante)
-    float min_activation_threshold = 0.60f; 
+    // 10. OUTPUT CON DEBOUNCING E GUARDIA ANTI-OSCILLAZIONE (ANTI PING-PONG)
+    float min_activation_threshold = 0.50f; 
     int bestIdx = 0;
     float maxScore = smoothedScores[0];
     if (smoothedScores[1] > maxScore) { bestIdx = 1; maxScore = smoothedScores[1]; }
@@ -347,51 +395,58 @@ void RuntimeState::updateAiStateMachine(const AudioMetrics& incomingMetrics, con
 
     SongDynamic candidate = currentSongDynamicTarget;
     SongDynamic newWinner = (bestIdx == 0) ? VERSE : (bestIdx == 1) ? BUILD : CHORUS;
-    
-    // Penalità massima abbassata a 8 beat (circa 4 secondi a 128 BPM)
-    const int penaltyProgression[6] = {0, 0, 2, 4, 6, 8};
+
+    // Protezione anti-saltellamento: se il contendente coincide con il target abbandonato da meno di 8 beat,
+    // richiediamo una soglia piu' alta per evitare rimbalzi
+    bool isRecentBounce = (newWinner == previousDynamicTarget && beatsSinceTargetChange < 8.0f);
+    float effectiveActivationThreshold = isRecentBounce ? 0.70f : min_activation_threshold;
+
+    // Determina i beat di conferma richiesti per la transizione verso newWinner
+    int requiredBeats = debounceBuild;
+    if (newWinner == VERSE) {
+        requiredBeats = debounceVerse;
+    } else if (newWinner == BUILD) {
+        requiredBeats = debounceBuild;
+    } else if (newWinner == CHORUS) {
+        // Se veniamo da un build e c'e' una vera esplosione energetica, switch rapido (2 beat)
+        if (currentSongDynamicTarget == BUILD && (targetProbabilities[2] >= 0.70f || forceImmediateChange)) {
+            requiredBeats = 2;
+        } else {
+            requiredBeats = debounceChorus;
+        }
+    }
+    currentPenaltyBeats = requiredBeats;
 
     if (newWinner == currentSongDynamicTarget) {
-        fractionalPenaltyCounter += beatDelta;
-        if (fractionalPenaltyCounter >= 8.0f) {
-            fractionalPenaltyCounter -= 8.0f; 
-            if (penaltyStage > 0) penaltyStage--;
-            currentPenaltyBeats = penaltyProgression[penaltyStage];
-        }
-        // Il timer si raffredda dolcemente quando il segnale è stabile
-        fractionalWaitCounter = std::max(0.0f, fractionalWaitCounter - beatDelta); 
+        fractionalWaitCounter = std::max(0.0f, fractionalWaitCounter - beatDelta);
     } else {
-        fractionalPenaltyCounter = 0.0f;
-        
-        if (maxScore >= min_activation_threshold) {
-            if (newWinner != lastWinner) fractionalWaitCounter = 0.0f;
-            
+        if (maxScore >= effectiveActivationThreshold) {
+            if (newWinner != lastWinner) {
+                fractionalWaitCounter = 0.0f; // Nuovo contendente: parte da zero
+            }
             fractionalWaitCounter += beatDelta;
 
             if (fractionalWaitCounter >= currentPenaltyBeats || forceImmediateChange) {
                 candidate = newWinner; 
-                if (forceImmediateChange) {
-                    penaltyStage = 0;
-                    currentPenaltyBeats = 0;
-                    fractionalPenaltyCounter = 0.0f;
-                    if (candidate == CHORUS) masterPhraseBeats = 0.0f; 
-                } else {
-                    if (penaltyStage < 5) penaltyStage++;
-                    currentPenaltyBeats = penaltyProgression[penaltyStage];
-                }
-                fractionalBeats = 0.0f;
-                beatsSinceLastChange = 0;
                 fractionalWaitCounter = 0.0f;
+                if (candidate == CHORUS) {
+                    masterPhraseBeats = 0.0f;
+                }
             }
         } else {
-            // Se la probabilità scende al 59% per un istante, non azzeriamo il timer, 
-            // ma lo facciamo scendere gradualmente (velocità x2)
-            fractionalWaitCounter = std::max(0.0f, fractionalWaitCounter - beatDelta * 2.0f); 
+            fractionalWaitCounter = std::max(0.0f, fractionalWaitCounter - beatDelta * 1.5f);
         }
     }
     
     lastWinner = newWinner; 
-    currentSongDynamicTarget = candidate;
+    if (candidate != currentSongDynamicTarget) {
+        previousDynamicTarget = currentSongDynamicTarget;
+        currentSongDynamicTarget = candidate;
+        beatsSinceTargetChange = 0.0f;
+        std::string dynStr = (currentSongDynamicTarget == VERSE) ? "VERSE" :
+                             (currentSongDynamicTarget == BUILD) ? "BUILD" : "CHORUS";
+        LOG_INFO("AutoMode", "AI Target cambiato in: " + dynStr);
+    }
     
     logAiStep();
 }

@@ -12,6 +12,7 @@ if(POLICY CMP0169)
 endif()
 
 include(FetchContent)
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
 
 # --- 1. Fetch nlohmann/json ---
 FetchContent_Declare(
@@ -99,14 +100,18 @@ if(APPLE)
     find_library(COREMEDIA_LIBRARY CoreMedia)
 endif()
 
+# --- Logger ---
+add_library(Logger STATIC src/Logger.cpp src/Logger.h)
+target_include_directories(Logger PUBLIC src)
+
 # --- ConfigManager ---
 add_library(ConfigManager STATIC src/ConfigManager.cpp src/ConfigManager.h)
-target_link_libraries(ConfigManager PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(ConfigManager PUBLIC nlohmann_json::nlohmann_json Logger)
 target_include_directories(ConfigManager PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 # --- AssetManager ---
 add_library(AssetManager STATIC src/AssetManager.cpp src/AssetManager.h)
-target_link_libraries(AssetManager PUBLIC nlohmann_json::nlohmann_json)
+target_link_libraries(AssetManager PUBLIC nlohmann_json::nlohmann_json Logger)
 if(APPLE)
     target_link_libraries(AssetManager PRIVATE ${OpenCV_LIBRARIES} ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
 else()
@@ -115,13 +120,16 @@ endif()
 
 # --- PlatformSpecificCode ---
 add_library(PlatformSpecificCode STATIC src/PlatformSpecificCode.cpp src/PlatformSpecificCode.h)
+target_include_directories(PlatformSpecificCode PRIVATE ${glfw_SOURCE_DIR}/include)
 if(APPLE)
-    target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY})
+    target_link_libraries(PlatformSpecificCode PRIVATE ${COREGRAPHICS_LIBRARY} ${APPLICATIONSERVICES_LIBRARY} glfw Logger)
+else()
+    target_link_libraries(PlatformSpecificCode PRIVATE glfw Logger)
 endif()
 
 # --- Audio DSP ---
 add_library(AudioAnalyzer STATIC src/AudioAnalyzer.cpp src/AudioAnalyzer.h)
-target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack)
+target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack Logger)
 target_include_directories(AudioAnalyzer PUBLIC 
     ${rtaudio_SOURCE_DIR} 
     ${btrack_SOURCE_DIR}/src
@@ -130,7 +138,7 @@ target_include_directories(AudioAnalyzer PUBLIC
 
 # --- KNN Classifier (NUOVO MODULO) ---
 add_library(KNNClassifier STATIC src/KNNClassifier.cpp src/KNNClassifier.h)
-target_link_libraries(KNNClassifier PUBLIC AssetManager AudioAnalyzer)
+target_link_libraries(KNNClassifier PUBLIC AssetManager AudioAnalyzer Logger)
 target_include_directories(KNNClassifier PRIVATE ${OpenCV_INCLUDE_DIRS})
 
 # --- AppGraphics (GraphicsManager + RuntimeState) ---
@@ -149,6 +157,7 @@ target_link_libraries(AppGraphics
     AudioAnalyzer
     KNNClassifier
     PlatformSpecificCode
+    Logger
     imgui                 
     glfw                  
     OpenGL::GL            
@@ -166,6 +175,7 @@ target_link_libraries(VisualHive PRIVATE
     AppGraphics          
     AudioAnalyzer      
     KNNClassifier
+    Logger
     ${OpenCV_LIBRARIES}
 )
 
@@ -180,11 +190,13 @@ if(APPLE)
     set_source_files_properties(src/PlatformSpecificCode_mac.mm PROPERTIES COMPILE_FLAGS "-fobjc-arc")
     target_link_libraries(PlatformSpecificCode PRIVATE 
         ${OpenCV_LIBRARIES}
+        glfw
         "-framework CoreGraphics" 
         "-framework ApplicationServices"
         "-framework ScreenCaptureKit"
         "-framework CoreMedia"
         "-framework CoreVideo"
+        "-framework AppKit"
     )
     
     # RtAudio su Mac necessita di questi frameworks

@@ -67,7 +67,7 @@ KNNPrediction KNNClassifier::predict(const AudioMetrics& metrics) {
 
 std::map<AiTrainingLabel, int> KNNClassifier::getClassCounts() const {
     std::map<AiTrainingLabel, int> counts;
-    for (int i = 0; i < 8; ++i) counts[static_cast<AiTrainingLabel>(i)] = 0;
+    for (int i = 0; i < 9; ++i) counts[static_cast<AiTrainingLabel>(i)] = 0;
     
     for (const auto& sample : temp_dataset) counts[sample.label]++;
     for (const auto& sample : dataset) counts[sample.label]++;
