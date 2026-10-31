@@ -23,6 +23,7 @@
 #include "PlatformSpecificCode.h"
 #include "RuntimeState.h"
 #include "GraphicsManager.h"
+#include "OscManager.h"
 #include "AudioAnalyzer.h"
 #include "KNNClassifier.h" 
 #include "Logger.h"
@@ -92,7 +93,12 @@ int main() {
         LOG_INFO("Main", "Dataset caricato: " + datasetPath + " (" + std::to_string(knnClassifier.getDatasetSize()) + " campioni)");
     }
 
+    OscManager oscManager;
+    oscManager.init(config.osc.ip, config.osc.port, config.osc.bpmAddress, config.osc.tapAddress, config.osc.enabled, config.osc.pulseDurationMs);
+    oscManager.setSendTapOnBeat(config.osc.sendTapOnBeat);
+
     AudioAnalyzer audioAnalyzer;
+    audioAnalyzer.setOscManager(&oscManager);
     std::vector<AudioAnalyzer::BpmPoint> calibPts;
     for (const auto& cp : config.bpmCalibration.points) {
         calibPts.push_back({cp.raw, cp.actual});
@@ -147,6 +153,7 @@ int main() {
             pred.probabilities.fill(0.0f);
 
             double currentAppTime = glfwGetTime();
+            oscManager.update(currentAppTime);
 
             // 2. TIMING DINAMICO BPM-LOCKED (2x BPM = 1/8 di nota)
             float currentBpm = (audioData.bpm > 30.0f) ? audioData.bpm : 128.0f;
@@ -343,7 +350,7 @@ int main() {
             bool isSpacePressed = ImGui::IsKeyDown(ImGuiKey_Space);
             outputFrame = graphics.applyStrobeEffect(outputFrame, state, audioData.bpm, isSpacePressed);
 
-            graphics.endDashboard(outputFrame, previewFrame, state, audioData.bpm, audioAnalyzer, pred, assetManager, &configManager);            
+            graphics.endDashboard(outputFrame, previewFrame, state, audioData.bpm, audioAnalyzer, pred, assetManager, &configManager, &oscManager);            
             graphics.showLive(outputFrame, state.isBlackout);
         }
 

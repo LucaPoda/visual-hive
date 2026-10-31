@@ -22,6 +22,8 @@
 #include "AudioAnalyzer.h"
 #include "KNNClassifier.h" 
 
+class OscManager;
+
 class GraphicsManager {
 private:
     std::string windowName;
@@ -77,7 +79,7 @@ public:
     
     void beginDashboard();
     
-    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr, ConfigManager* configMgr = nullptr);    
+    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr, ConfigManager* configMgr = nullptr, OscManager* oscMgr = nullptr);    
     
     void showLive(const cv::Mat& frame, bool isBlackout);
     

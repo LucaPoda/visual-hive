@@ -44,6 +44,19 @@ struct AppConfig {
     };
 
     BpmCalibrationConfig bpmCalibration;
+
+    // Configurazione Trasmissione OSC (QLC+ Lights Sync)
+    struct OscConfig {
+        bool enabled = true;
+        std::string ip = "127.0.0.1";
+        int port = 7700;
+        std::string bpmAddress = "/bpm";
+        std::string tapAddress = "/tap";
+        bool sendTapOnBeat = true;
+        int pulseDurationMs = 35;
+    };
+
+    OscConfig osc;
 };
 
 class ConfigManager {
@@ -62,6 +75,9 @@ public:
     // Metodo per salvare la configurazione
     bool saveConfig() const;
     bool saveBpmCalibration(float slope, float intercept, const std::vector<AppConfig::BpmCalibrationPoint>& points);
+    bool saveOscConfig(bool enabled, const std::string& ip, int port,
+                       const std::string& bpmAddress, const std::string& tapAddress,
+                       bool sendTapOnBeat, int pulseDurationMs);
     
 private:
     void loadAssetsConfig(const std::string& assetsConfigFilePath);

@@ -1,22 +1,109 @@
 {
-    "paths": {
-        "assets_directory": "assets",
-        "key_mapping_file": "config/key_mapping.csv",
-        "assets_config_file": "config/assets_config.json"
-    },
-    "display": {
-        "window_name": "Visual Hive Live"
-    },
     "ableton_link": {
-        "phrase_length": 4,
-        "default_bpm": 120.0
+        "default_bpm": 120.0,
+        "phrase_length": 4
+    },
+    "advanced": {
+        "audioBufferFrames": 512,
+        "audioSampleRate": 44100,
+        "debounceBuild": 3,
+        "debounceChorus": 2,
+        "debounceVerse": 4,
+        "knnHistorySize": 30,
+        "knnKNeighbors": 21,
+        "strobeDurationMs": 50
     },
     "bpm_calibration": {
-        "slope": 1.08,
-        "intercept": -6.6,
+        "intercept": 3.166548490524292,
         "points": [
-            { "raw": 120.0, "actual": 123.0 },
-            { "raw": 145.0, "actual": 150.0 }
-        ]
+            {
+                "actual": 120.0,
+                "raw": 117.4538345336914
+            },
+            {
+                "actual": 122.0,
+                "raw": 120.18531799316406
+            },
+            {
+                "actual": 125.0,
+                "raw": 123.046875
+            },
+            {
+                "actual": 128.0,
+                "raw": 126.04801940917969
+            },
+            {
+                "actual": 130.0,
+                "raw": 129.19921875
+            },
+            {
+                "actual": 134.0,
+                "raw": 132.51202392578125
+            },
+            {
+                "actual": 145.0,
+                "raw": 143.5546875
+            },
+            {
+                "actual": 150.0,
+                "raw": 147.65625
+            },
+            {
+                "actual": 155.0,
+                "raw": 151.99908447265625
+            },
+            {
+                "actual": 160.0,
+                "raw": 156.60511779785156
+            },
+            {
+                "actual": 165.0,
+                "raw": 161.4990234375
+            },
+            {
+                "actual": 170.0,
+                "raw": 166.7086639404297
+            },
+            {
+                "actual": 153.0,
+                "raw": 151.99908447265625
+            },
+            {
+                "actual": 152.0,
+                "raw": 147.65625
+            },
+            {
+                "actual": 180.0,
+                "raw": 181.3322296142578
+            },
+            {
+                "actual": 190.0,
+                "raw": 187.92613220214844
+            },
+            {
+                "actual": 200.0,
+                "raw": 198.76803588867188
+            }
+        ],
+        "slope": 0.9925392866134644
+    },
+    "display": {
+        "uiWindowHeight": 1080,
+        "uiWindowWidth": 1920,
+        "window_name": "Visual Hive Live"
+    },
+    "paths": {
+        "assets_config_file": "config/assets_config.json",
+        "assets_directory": "assets",
+        "key_mapping_file": "config/key_mapping.csv"
+    },
+    "osc": {
+        "enabled": true,
+        "ip": "127.0.0.1",
+        "port": 7700,
+        "bpm_address": "/bpm",
+        "tap_address": "/tap",
+        "send_tap_on_beat": true,
+        "pulse_duration_ms": 35
     }
 }

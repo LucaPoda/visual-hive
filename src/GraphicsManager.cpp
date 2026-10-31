@@ -1,5 +1,6 @@
 // GraphicsManager.cpp
 #include "GraphicsManager.h"
+#include "OscManager.h"
 #include "Logger.h"
 #include "ColorUtils.h"
 #include <cmath>
@@ -285,7 +286,7 @@ void GraphicsManager::beginDashboard() {
     ImGui::NewFrame();
 }
 
-void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr, ConfigManager* configMgr) {
+void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr, ConfigManager* configMgr, OscManager* oscMgr) {
     glfwMakeContextCurrent(uiWindow);
 
     if (!assetMgr.isReady.load()) {
@@ -536,13 +537,26 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         #endif
     }
     
-    // Testo BPM a destra (allineato sulla stessa riga della registrazione) con pulsante Calibrazione
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 150.0f);
+    // Testo BPM a destra (allineato sulla stessa riga della registrazione) con pulsante Calibrazione e OSC
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 300.0f);
     ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%5.1f BPM", audioData.bpm);
     ImGui::SameLine();
     static bool showBpmCalibration = false;
     if (ImGui::SmallButton(showBpmCalibration ? "Calibra [-]" : "Calibra [+]")) {
         showBpmCalibration = !showBpmCalibration;
+    }
+    ImGui::SameLine();
+    static bool showOscPanel = false;
+    if (ImGui::SmallButton(showOscPanel ? "OSC/QLC+ [-]" : "OSC/QLC+ [+]")) {
+        showOscPanel = !showOscPanel;
+    }
+    if (oscMgr != nullptr && oscMgr->isEnabled()) {
+        ImGui::SameLine();
+        if (oscMgr->isBeatFlashActive()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.1f, 1.0f), "[* TAP]");
+        } else {
+            ImGui::TextDisabled("[o TAP]");
+        }
     }
 
     if (showBpmCalibration) {
@@ -665,6 +679,95 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             }
         }
         
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
+
+    if (showOscPanel && oscMgr != nullptr) {
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.13f, 0.17f, 1.0f));
+        ImGui::BeginChild("OscControlBox", ImVec2(0, 155), true);
+        
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "TRASMISSIONE OSC / QLC+ (SINCRONIZZAZIONE LUCI)");
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 170.0f);
+        if (oscMgr->isEnabled()) {
+            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ATTIVO -> %s:%d]", oscMgr->getTargetIp().c_str(), oscMgr->getTargetPort());
+        } else {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[DISABILITATO]");
+        }
+
+        static char oscIpBuf[64] = "";
+        static int oscPortBuf = 7700;
+        static char oscBpmAddrBuf[64] = "";
+        static char oscTapAddrBuf[64] = "";
+        static bool oscInitialized = false;
+
+        if (!oscInitialized) {
+            std::strncpy(oscIpBuf, oscMgr->getTargetIp().c_str(), sizeof(oscIpBuf) - 1);
+            oscPortBuf = oscMgr->getTargetPort();
+            std::strncpy(oscBpmAddrBuf, oscMgr->getBpmAddress().c_str(), sizeof(oscBpmAddrBuf) - 1);
+            std::strncpy(oscTapAddrBuf, oscMgr->getTapAddress().c_str(), sizeof(oscTapAddrBuf) - 1);
+            oscInitialized = true;
+        }
+
+        bool isOscEnabled = oscMgr->isEnabled();
+        if (ImGui::Checkbox("Abilita OSC", &isOscEnabled)) {
+            oscMgr->setEnabled(isOscEnabled);
+        }
+        ImGui::SameLine();
+        bool sendBeatTap = oscMgr->isSendTapOnBeat();
+        if (ImGui::Checkbox("Invia TAP a ogni Beat", &sendBeatTap)) {
+            oscMgr->setSendTapOnBeat(sendBeatTap);
+        }
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 150.0f);
+        ImGui::TextDisabled("Pkt inviati: %llu", (unsigned long long)oscMgr->getPacketsSent());
+
+        // Riga Host e Porta
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::InputText("IP Target", oscIpBuf, sizeof(oscIpBuf))) {
+            oscMgr->updateTarget(oscIpBuf, oscPortBuf);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(70.0f);
+        if (ImGui::InputInt("Porta UDP", &oscPortBuf, 0)) {
+            oscMgr->updateTarget(oscIpBuf, oscPortBuf);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Default QLC+: 7700)");
+
+        // Riga Indirizzi OSC
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::InputText("Path BPM (Clock)", oscBpmAddrBuf, sizeof(oscBpmAddrBuf))) {
+            oscMgr->updateAddresses(oscBpmAddrBuf, oscTapAddrBuf);
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(110.0f);
+        if (ImGui::InputText("Path TAP (Speed Dial)", oscTapAddrBuf, sizeof(oscTapAddrBuf))) {
+            oscMgr->updateAddresses(oscBpmAddrBuf, oscTapAddrBuf);
+        }
+
+        ImGui::Separator();
+
+        // Pulsanti Test e Salvataggio
+        if (ImGui::Button("Test Invia BPM")) {
+            oscMgr->triggerManualBpm(audioData.bpm > 30.0f ? audioData.bpm : 120.0f);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invia il valore BPM a QLC+ (utile per testare il clock master o mappare con Auto-Detect)");
+
+        ImGui::SameLine();
+        if (ImGui::Button("Test TAP (Speed Dial)")) {
+            oscMgr->triggerManualTap();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Invia un segnale TAP (1.0 -> 0.0) per mappare 'Auto Detect' o testare lo Speed Dial in QLC+");
+
+        if (configMgr != nullptr) {
+            ImGui::SameLine();
+            if (ImGui::Button("Salva OSC in config.json")) {
+                configMgr->saveOscConfig(oscMgr->isEnabled(), oscIpBuf, oscPortBuf, oscBpmAddrBuf, oscTapAddrBuf, oscMgr->isSendTapOnBeat(), oscMgr->getPulseDurationMs());
+                LOG_INFO("ConfigManager", "Configurazione OSC salvata con successo in config.json");
+            }
+        }
+
         ImGui::EndChild();
         ImGui::PopStyleColor();
     }

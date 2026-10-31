@@ -127,9 +127,14 @@ else()
     target_link_libraries(PlatformSpecificCode PRIVATE glfw Logger)
 endif()
 
+# --- OscManager (OSC Transmission for QLC+) ---
+add_library(OscManager STATIC src/OscManager.cpp src/OscManager.h)
+target_include_directories(OscManager PUBLIC src)
+target_link_libraries(OscManager PUBLIC Logger)
+
 # --- Audio DSP ---
 add_library(AudioAnalyzer STATIC src/AudioAnalyzer.cpp src/AudioAnalyzer.h)
-target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack Logger nlohmann_json::nlohmann_json)
+target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack Logger nlohmann_json::nlohmann_json OscManager)
 target_include_directories(AudioAnalyzer PUBLIC 
     ${rtaudio_SOURCE_DIR} 
     ${btrack_SOURCE_DIR}/src
@@ -149,7 +154,7 @@ add_library(AppGraphics STATIC
     src/RuntimeState.h
 )
 
-# AppGraphics ora richiede anche KNNClassifier
+# AppGraphics ora richiede anche KNNClassifier e OscManager
 target_link_libraries(AppGraphics 
     PUBLIC
     AssetManager
@@ -158,6 +163,7 @@ target_link_libraries(AppGraphics
     KNNClassifier
     PlatformSpecificCode
     Logger
+    OscManager
     imgui                 
     glfw                  
     OpenGL::GL            
@@ -176,6 +182,7 @@ target_link_libraries(VisualHive PRIVATE
     AudioAnalyzer      
     KNNClassifier
     Logger
+    OscManager
     ${OpenCV_LIBRARIES}
 )
 

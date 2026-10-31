@@ -1,5 +1,6 @@
 // AudioAnalyzer.cpp
 #include "AudioAnalyzer.h"
+#include "OscManager.h"
 #include "Logger.h"
 #include <nlohmann/json.hpp>
 #include <cmath>
@@ -208,7 +209,8 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
         if (btrackBuffer.size() != numFrames) btrackBuffer.resize(numFrames);
         for (unsigned int i = 0; i < numFrames; i++) btrackBuffer[i] = static_cast<double>(buffer[i]);
         btrack->processAudioFrame(btrackBuffer.data());
-        metrics.isBeat = btrack->beatDueInCurrentFrame();
+        bool frameBeat = btrack->beatDueInCurrentFrame();
+        metrics.isBeat = frameBeat;
         
         float rawTempo = static_cast<float>(btrack->getCurrentTempoEstimate());
 
@@ -231,6 +233,13 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
             }
         }
         metrics.bpm = calibrated;
+
+        if (oscManager) {
+            if (frameBeat && calibrated > 30.0f) {
+                oscManager->onBeat(calibrated);
+            }
+            oscManager->processAudioFrame();
+        }
     }
 
     unsigned int fftSize = 2048; 
@@ -326,7 +335,9 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     metrics.bandBrilliance = calcBandEnergy(6000.0f, 20000.0f);
 
     std::lock_guard<std::mutex> lock(metricsMutex);
+    bool accumBeat = currentMetrics.isBeat || metrics.isBeat;
     currentMetrics = metrics;
+    currentMetrics.isBeat = accumBeat;
 }
 
 // =======================================================

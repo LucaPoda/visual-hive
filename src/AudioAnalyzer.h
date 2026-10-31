@@ -48,10 +48,14 @@ struct AudioDeviceInfo {
     std::string name;
 };
 
+class OscManager;
+
 class AudioAnalyzer {
 public:
     AudioAnalyzer();
     ~AudioAnalyzer();
+
+    void setOscManager(OscManager* osc) { oscManager = osc; }
 
     bool start(unsigned int deviceId = 0, unsigned int configSampleRate = 44100, unsigned int configBufferFrames = 512);
     void stop();
@@ -103,6 +107,8 @@ private:
     std::atomic<float> lastRawBpm{0.0f};
     std::mutex pointsMutex;
     std::vector<BpmPoint> calibrationPoints;
+
+    OscManager* oscManager = nullptr;
 
     unsigned int sampleRate = 44100;
     std::vector<float> previousMagnitudes;

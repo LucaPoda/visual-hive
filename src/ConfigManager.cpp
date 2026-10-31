@@ -96,6 +96,16 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
         }
     }
 
+    if (data.count("osc")) {
+        config.osc.enabled = data["osc"].value("enabled", true);
+        config.osc.ip = data["osc"].value("ip", "127.0.0.1");
+        config.osc.port = data["osc"].value("port", 7700);
+        config.osc.bpmAddress = data["osc"].value("bpm_address", "/bpm");
+        config.osc.tapAddress = data["osc"].value("tap_address", "/tap");
+        config.osc.sendTapOnBeat = data["osc"].value("send_tap_on_beat", true);
+        config.osc.pulseDurationMs = data["osc"].value("pulse_duration_ms", 35);
+    }
+
     loadAssetsConfig(config.assetsConfigFile);
 }
 
@@ -172,6 +182,14 @@ bool ConfigManager::saveConfig() const {
         });
     }
 
+    data["osc"]["enabled"] = config.osc.enabled;
+    data["osc"]["ip"] = config.osc.ip;
+    data["osc"]["port"] = config.osc.port;
+    data["osc"]["bpm_address"] = config.osc.bpmAddress;
+    data["osc"]["tap_address"] = config.osc.tapAddress;
+    data["osc"]["send_tap_on_beat"] = config.osc.sendTapOnBeat;
+    data["osc"]["pulse_duration_ms"] = config.osc.pulseDurationMs;
+
     std::ofstream configFileOut(configFilePath);
     if (!configFileOut.is_open()) return false;
     
@@ -183,5 +201,18 @@ bool ConfigManager::saveBpmCalibration(float slope, float intercept, const std::
     config.bpmCalibration.slope = slope;
     config.bpmCalibration.intercept = intercept;
     config.bpmCalibration.points = points;
+    return saveConfig();
+}
+
+bool ConfigManager::saveOscConfig(bool enabled, const std::string& ip, int port,
+                                   const std::string& bpmAddress, const std::string& tapAddress,
+                                   bool sendTapOnBeat, int pulseDurationMs) {
+    config.osc.enabled = enabled;
+    config.osc.ip = ip;
+    config.osc.port = port;
+    config.osc.bpmAddress = bpmAddress;
+    config.osc.tapAddress = tapAddress;
+    config.osc.sendTapOnBeat = sendTapOnBeat;
+    config.osc.pulseDurationMs = pulseDurationMs;
     return saveConfig();
 }
