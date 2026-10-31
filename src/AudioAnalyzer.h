@@ -1,4 +1,3 @@
-// AudioAnalyzer.h
 #pragma once
 
 #include <RtAudio.h>
@@ -16,25 +15,31 @@
 #include "BTrack.h" 
 
 struct AudioMetrics {
+    // Metriche operative di sistema
+    float peakL = 0.0f;
+    float peakR = 0.0f;
     float bpm = 0.0f;
     bool isBeat = false;
-    
-    // Metering
-    float peak = 0.0f;  // Mantenuto per compatibilità (max tra L e R)
-    float peakL = 0.0f; // Canale Sinistro
-    float peakR = 0.0f; // Canale Destro
-    
-    // Le 5 Feature "Dream Team"
-    float rms = 0.0f;          
-    float bandSubBass = 0.0f;  
-    float bandBass = 0.0f;     
-    float bandHighMid = 0.0f;  
+
+    // Feature Temporali (Volume e Impulsività)
+    float rms = 0.0f;
+    float zcr = 0.0f;              
+    float crestFactor = 0.0f;      
+
+    // Feature Spettrali (Timbro e Forma d'onda)
     float spectralFlux = 0.0f;
-    
-    // Manteniamo le altre bande solo per la UI opzionale, ma non per il KNN
-    float bandLowMid = 0.0f;   
-    float bandMid = 0.0f;      
-    float bandHigh = 0.0f;     
+    float spectralCentroid = 0.0f; 
+    float spectralSpread = 0.0f;   
+    float spectralRolloff = 0.0f;  
+
+    // Bande di Frequenza (Densità di energia)
+    float bandSubBass = 0.0f;      
+    float bandBass = 0.0f;         
+    float bandLowMid = 0.0f;       
+    float bandMid = 0.0f;          
+    float bandHighMid = 0.0f;      
+    float bandPresence = 0.0f;     
+    float bandBrilliance = 0.0f;   
 };
 
 struct AudioDeviceInfo {
@@ -54,7 +59,6 @@ public:
     std::vector<AudioDeviceInfo> getInputDevices();
     unsigned int getCurrentDeviceId() const { return currentDeviceId; }
 
-    // --- METODI RECORDING ---
     void startRecording(const std::string& baseFilename);
     void stopRecording();
     bool isRecordingActive() const { return isRecording; }
@@ -65,7 +69,6 @@ private:
     static int audioCallback(void* outputBuffer, void* inputBuffer, unsigned int nBufferFrames,
                              double streamTime, RtAudioStreamStatus status, void* userData);
     
-    // Nuova firma per accettare i picchi L e R
     void processBuffer(const float* buffer, unsigned int numFrames, double streamTime, float peakL, float peakR);
 
     RtAudio adc;
@@ -79,25 +82,6 @@ private:
     std::vector<float> previousMagnitudes;
     unsigned int currentDeviceId = 0;
     
-    // Tracker Locali per aggregazione
-    float maxBandEnergies[6] = {0.001f, 0.001f, 0.001f, 0.001f, 0.001f, 0.001f}; 
-
-    // --- AUTO-SCALER GLOBALI (Picchi Assoluti) ---
-    float globalMaxRms = 0.001f;
-    float globalMaxSubBass = 0.001f;
-    float globalMaxBass = 0.001f;
-    float globalMaxHighMid = 0.001f;
-    float globalMaxFlux = 0.001f;
-
-    struct InstantBands {
-        float subBass, bass, lowMid, mid, highMid, high;
-        float rms;
-        float rawFlux;     
-    };
-    
-    std::deque<InstantBands> bandHistory;
-
-    // --- VARIABILI RECORDING ---
     std::atomic<bool> isRecording{false};
     std::atomic<bool> stopWriter{false};
     std::mutex recordMutex;

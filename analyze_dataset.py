@@ -3,89 +3,118 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import os
+from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.metrics import accuracy_score, confusion_matrix
 
-def analyze_and_filter_dataset(file_path='knn_dataset.csv', output_path='knn_dataset_clean.csv', iqr_multiplier=1.0):
+def analyze_knn_full_dataset(file_path='datasets/new_dataset_14_feature.csv'):
     if not os.path.exists(file_path):
         print(f"Errore: Il file {file_path} non esiste.")
         return
 
-    # 1. Caricamento del dataset con le 5 feature definitive
-    feature_names = ['RMS', 'SubBass', 'Bass', 'HighMid', 'SpectralFlux']
+    # 1. Caricamento (14 Feature + 1 Label)
+    feature_names = [
+        'RMS', 'ZCR', 'Crest', 'Flux', 
+        'Centroid', 'Spread', 'Rolloff', 
+        'SubBass', 'Bass', 'LowMid', 'Mid', 
+        'HighMid', 'Presence', 'Brilliance'
+    ]
     column_names = feature_names + ['Label']
     
-    try:
-        df_orig = pd.read_csv(file_path, names=column_names)
-    except Exception as e:
-        print(f"Errore nella lettura del CSV: {e}")
-        return
-
-    label_mapping = {0: 'LOW', 1: 'MID', 2: 'HIGH'}
-    df_orig['LabelName'] = df_orig['Label'].map(label_mapping)
-    df_orig['Versione'] = 'Originale'
-
-    print(f"--- DATASET ORIGINALE: {len(df_orig)} samples ---")
-    print(df_orig['LabelName'].value_counts(), "\n")
-
-    # 2. Filtraggio Outlier (IQR - Interquartile Range)
-    df_filtered = pd.DataFrame()
-    for label in ['LOW', 'MID', 'HIGH']:
-        group = df_orig[df_orig['LabelName'] == label].copy()
-        
-        # Calcolo del primo (Q1) e terzo (Q3) quartile
-        Q1 = group[feature_names].quantile(0.25)
-        Q3 = group[feature_names].quantile(0.75)
-        IQR = Q3 - Q1
-        
-        # Definiamo i limiti (iqr_multiplier a 1.0 è molto aggressivo, stringe i cluster)
-        lower_bound = Q1 - (iqr_multiplier * IQR)
-        upper_bound = Q3 + (iqr_multiplier * IQR)
-        
-        # Manteniamo solo le righe che rientrano nei limiti per TUTTE le feature
-        mask = ((group[feature_names] >= lower_bound) & (group[feature_names] <= upper_bound)).all(axis=1)
-        df_filtered = pd.concat([df_filtered, group[mask]])
-
-    df_filtered['Versione'] = 'Filtrato (IQR)'
-
-    print(f"--- DATASET FILTRATO (IQR Mult={iqr_multiplier}): {len(df_filtered)} samples ---")
-    print(df_filtered['LabelName'].value_counts(), "\n")
-    print(f"Sample rimossi: {len(df_orig) - len(df_filtered)}\n")
-
-    # Salvataggio CSV pulito
-    df_to_save = df_filtered[column_names]
-    df_to_save.to_csv(output_path, index=False, header=False)
-    print(f"✅ Dataset pulito salvato in: '{output_path}'")
-
-    # 3. Visualizzazione Grafica
-    df_combined = pd.concat([df_orig, df_filtered], ignore_index=True)
-    label_order = ['LOW', 'MID', 'HIGH']
+    df = pd.read_csv(file_path, names=column_names)
     
-    sns.set_theme(style="whitegrid")
-    plt.figure(figsize=(20, 4))
+    label_mapping = {
+        0: 'EMPTY_PAD', 1: 'LIGHT_RHYTHM', 2: 'VOCAL_AMBIENT', 
+        3: 'BUILD_SNARE', 4: 'BUILD_ACID', 5: 'BUILD_MELODIC', 
+        6: 'DROP_RAW', 7: 'DROP_MELODIC', 8: 'BRIDGE'
+    }
     
-    for i, feature in enumerate(feature_names, 1):
-        plt.subplot(1, 5, i)
+    macro_mapping = {
+        'EMPTY_PAD': 'LOW', 'LIGHT_RHYTHM': 'LOW', 'VOCAL_AMBIENT': 'LOW',
+        'BUILD_SNARE': 'MID', 'BUILD_ACID': 'MID', 'BUILD_MELODIC': 'MID',
+        'DROP_RAW': 'HIGH', 'DROP_MELODIC': 'HIGH', 'BRIDGE': 'HIGH'
+    }
+    
+    df['LabelName'] = df['Label'].map(label_mapping)
+    print(f"Dataset Totale: {len(df)} campioni.\n")
+    label_order = list(label_mapping.values())
+
+    # ==========================================
+    # PARTE 1: DIAGRAMMI A VIOLINO (DISTRIBUZIONI)
+    # ==========================================
+    print("Generazione dei Violin Plot in corso...")
+    
+    # Prepariamo una griglia 7x2 per le 14 feature
+    fig_v, axes_v = plt.subplots(7, 2, figsize=(24, 35))
+    axes_v = axes_v.flatten()
+
+    # Creiamo un violin plot per ogni feature
+    for idx, feature in enumerate(feature_names):
         sns.violinplot(
-            x='LabelName', 
-            y=feature, 
-            hue='Versione', 
-            data=df_combined, 
-            order=label_order, 
-            split=True, 
-            inner='quartile',
-            palette={'Originale': '#bdc3c7', 'Filtrato (IQR)': '#2980b9'}
+            data=df,
+            x='LabelName',
+            y=feature,
+            order=label_order,
+            ax=axes_v[idx],
+            palette='husl',
+            inner='quartile', # Mostra quartili e mediana all'interno del violino
+            linewidth=1.2
         )
-        plt.title(f'{feature}')
-        plt.xlabel('')
-        plt.ylabel('Valore' if i == 1 else '')
-        if i != 1:
-            plt.legend([],[], frameon=False)
-        else:
-            plt.legend(loc='upper right')
+        axes_v[idx].set_title(f"Distribuzione Feature: {feature}", fontsize=16, fontweight='bold')
+        axes_v[idx].set_xlabel('')
+        axes_v[idx].set_ylabel('Valore Z-Score Normalizzato')
+        axes_v[idx].tick_params(axis='x', rotation=45)
+        axes_v[idx].grid(axis='y', linestyle='--', alpha=0.6)
 
     plt.tight_layout()
-    plt.savefig('violin_plot_iqr.png')
-    print("Grafico salvato come 'violin_plot_iqr.png'.")
-    plt.show()
+    plt.savefig('feature_distributions_violin.png', bbox_inches='tight', dpi=150)
+    print("✅ Diagrammi a violino esportati come 'feature_distributions_violin.png'")
+
+    # ==========================================
+    # PARTE 2: VALUTAZIONE KNN CLOSED-LOOP
+    # ==========================================
+    X = df[feature_names]
+    y_9 = df['LabelName']
+    y_macro = y_9.map(macro_mapping)
+
+    # Standardizzazione
+    scaler = StandardScaler()
+    X_scaled = scaler.fit_transform(X)
+
+    # Test su K multipli
+    k_values = [3, 5, 11, 21]
+    
+    fig, axes = plt.subplots(2, 2, figsize=(22, 18))
+    axes = axes.flatten()
+
+    print("\n--- RISULTATI CLOSED-LOOP K-NEIGHBORS ---")
+    for idx, k in enumerate(k_values):
+        actual_k = min(k, len(df))
+        
+        model = KNeighborsClassifier(n_neighbors=actual_k)
+        model.fit(X_scaled, y_9)
+        
+        y_pred_9 = model.predict(X_scaled)
+        y_pred_macro = pd.Series(y_pred_9).map(macro_mapping)
+        
+        acc_9 = accuracy_score(y_9, y_pred_9)
+        acc_macro = accuracy_score(y_macro, y_pred_macro)
+        
+        print(f"KNN (K={actual_k:2d}) | Acc 9-Classi: {acc_9*100:.1f}% | Acc Macro: {acc_macro*100:.1f}%")
+
+        cm = confusion_matrix(y_9, y_pred_9, labels=label_order)
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Greens', 
+                    xticklabels=label_order, yticklabels=label_order, 
+                    cbar=False, ax=axes[idx], square=True)
+        
+        axes[idx].set_title(f"KNN (K={actual_k})\nMacro Acc (Sui dati visti): {acc_macro*100:.1f}%", fontsize=15, pad=15)
+        axes[idx].set_ylabel('True Label')
+        axes[idx].set_xlabel('Predicted Label')
+        axes[idx].tick_params(axis='x', rotation=45)
+
+    plt.tight_layout()
+    plt.savefig('knn_closed_loop_evaluation.png', bbox_inches='tight')
+    print("✅ Matrici di confusione esportate come 'knn_closed_loop_evaluation.png'")
 
 if __name__ == "__main__":
-    analyze_and_filter_dataset('knn_dataset.csv', iqr_multiplier=0.75)
+    analyze_knn_full_dataset('datasets/new_dataset_14_feature.csv')

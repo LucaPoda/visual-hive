@@ -326,7 +326,7 @@ std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::st
 
         struct NamedColor { std::string name; };
         std::vector<NamedColor> baseColors = {
-            {"Bianco"}, {"Nero"}, {"Rosso"}, {"Verde"}, {"Blu"}, {"Viola"}, {"Giallo"}, {"Arancione"}
+            {"White"}, {"Red"}, {"Green"}, {"Blue"}, {"Cyan"}, {"Magenta"}, {"Yellow"}
         };
         for(const auto& bc : baseColors) globalColorCounts[bc.name] = 0;
 
@@ -355,17 +355,19 @@ std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::st
                         cv::Vec3b pixel = hsvFrame.at<cv::Vec3b>(y, x);
                         int h = pixel[0], s = pixel[1], v = pixel[2];
                         
+                        // Ignora totalmente i pixel bui (il nero non fa colore)
+                        if (v < 40) continue; 
+                        
                         std::string colorName = "";
-                        if (v < 40) colorName = "Nero";
-                        else if (s < 40 && v > 200) colorName = "Bianco";
+                        // Bianco (bassa saturazione, alta luminosità)
+                        if (s < 40 && v > 200) colorName = "White";
                         else {
-                            if (h <= 10 || h >= 160) colorName = "Rosso";
-                            else if (h >= 11 && h <= 25) colorName = "Arancione";
-                            else if (h >= 26 && h <= 35) colorName = "Giallo";
-                            else if (h >= 36 && h <= 85) colorName = "Verde";
-                            else if (h >= 86 && h <= 130) colorName = "Blu";
-                            else if (h >= 131 && h <= 159) colorName = "Viola";
-                            else colorName = "Nero"; 
+                            if (h <= 10 || h >= 160) colorName = "Red";
+                            else if (h >= 11 && h <= 35) colorName = "Yellow";
+                            else if (h >= 36 && h <= 85) colorName = "Green";
+                            else if (h >= 86 && h <= 105) colorName = "Cyan";
+                            else if (h >= 106 && h <= 130) colorName = "Blue";
+                            else if (h >= 131 && h <= 159) colorName = "Magenta";
                         }
                         if (!colorName.empty()) globalColorCounts[colorName]++;
                     }
@@ -380,8 +382,22 @@ std::shared_ptr<VideoAnalysisTask> AssetManager::analyzeVideoAsync(const std::st
         std::vector<std::pair<std::string, int>> sortedCounts(globalColorCounts.begin(), globalColorCounts.end());
         std::sort(sortedCounts.begin(), sortedCounts.end(), [](const auto& a, const auto& b) { return a.second > b.second; });
 
-        if(sortedCounts.size() > 0) task->primaryColor = sortedCounts[0].first;
-        if(sortedCounts.size() > 1) task->secondaryColor = sortedCounts[1].first;
+        // Calcola il totale dei pixel colorati validi trovati
+        int totalValidPixels = 0;
+        for (const auto& pair : sortedCounts) totalValidPixels += pair.second;
+
+        // Soglia di sbarramento: il secondo colore deve pesare almeno il 20% del video
+        float secondaryThreshold = 0.20f; 
+
+        if(sortedCounts.size() > 0 && sortedCounts[0].second > 0) {
+            task->primaryColor = sortedCounts[0].first;
+            
+            if(sortedCounts.size() > 1 && (float)sortedCounts[1].second / totalValidPixels >= secondaryThreshold) {
+                task->secondaryColor = sortedCounts[1].first;
+            } else {
+                task->secondaryColor = "";
+            }
+        }
 
         task->bestFrameIndex = bestFrame;
         

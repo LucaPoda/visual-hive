@@ -211,14 +211,13 @@ void GraphicsManager::UpdateGLTexture(const cv::Mat& mat, GLuint& textureID) {
 
 void GraphicsManager::drawPaletteSquare(const std::string& primary, const std::string& secondary, float size) {
     auto getCol32 = [](const std::string& name) -> ImU32 {
-        if (name == "Bianco") return IM_COL32(255, 255, 255, 255);
-        if (name == "Nero") return IM_COL32(0, 0, 0, 255);
-        if (name == "Rosso") return IM_COL32(255, 0, 0, 255);
-        if (name == "Verde") return IM_COL32(0, 255, 0, 255);
-        if (name == "Blu") return IM_COL32(0, 0, 255, 255);
-        if (name == "Viola") return IM_COL32(128, 0, 128, 255);
-        if (name == "Giallo") return IM_COL32(255, 255, 0, 255);
-        if (name == "Arancione") return IM_COL32(255, 165, 0, 255);
+        if (name == "White") return IM_COL32(255, 255, 255, 255);
+        if (name == "Red") return IM_COL32(255, 0, 0, 255);
+        if (name == "Green") return IM_COL32(0, 255, 0, 255);
+        if (name == "Blue") return IM_COL32(0, 0, 255, 255);
+        if (name == "Cyan") return IM_COL32(0, 255, 255, 255);
+        if (name == "Magenta") return IM_COL32(255, 0, 255, 255);
+        if (name == "Yellow") return IM_COL32(255, 255, 0, 255);
         return IM_COL32(128, 128, 128, 255);
     };
 
@@ -381,19 +380,58 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::SameLine();
     if (ImGui::Button("Refresh")) audioDevices = audioAnalyzer.getInputDevices();
 
+    // ----------------------------------------------------
+    // LOGICA PEAK HOLD E DBFS
+    // ----------------------------------------------------
     static float peakHoldL = 0.0f, peakHoldR = 0.0f;
-    if (audioData.peakL > peakHoldL) peakHoldL = audioData.peakL; else peakHoldL *= 0.999f;
-    if (audioData.peakR > peakHoldR) peakHoldR = audioData.peakR; else peakHoldR *= 0.999f;
+    static double lastPeakL = ImGui::GetTime();
+    static double lastPeakR = ImGui::GetTime();
+
+    // Il Peak Hold si resetta ogni 1.5 secondi se non viene battuto da un nuovo picco
+    if (audioData.peakL >= peakHoldL || (ImGui::GetTime() - lastPeakL) > 1.5) {
+        peakHoldL = audioData.peakL;
+        lastPeakL = ImGui::GetTime();
+    }
+    if (audioData.peakR >= peakHoldR || (ImGui::GetTime() - lastPeakR) > 1.5) {
+        peakHoldR = audioData.peakR;
+        lastPeakR = ImGui::GetTime();
+    }
+
+    float maxPeakLinear = std::max(peakHoldL, peakHoldR);
+    float maxDb = (maxPeakLinear > 0.0001f) ? 20.0f * std::log10(maxPeakLinear) : -60.0f;
+
+    // Testo DBFS a destra
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 60.0f);
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 1.0f, 1.0f), "%3.0f dBFS", maxDb);
 
     auto drawDbMeter = [](const char* label, float linearPeak, float linearHold) {
         float db = (linearPeak > 0.0001f) ? 20.0f * std::log10(linearPeak) : -60.0f;
+        float holdDb = (linearHold > 0.0001f) ? 20.0f * std::log10(linearHold) : -60.0f;
+        
         float fraction = std::clamp((db + 48.0f) / 48.0f, 0.0f, 1.0f);
+        float holdFraction = std::clamp((holdDb + 48.0f) / 48.0f, 0.0f, 1.0f);
+        
         ImVec4 color = (db >= -0.1f) ? ImVec4(1.0f, 0.1f, 0.1f, 1.0f) : (db > -6.0f) ? ImVec4(1.0f, 0.8f, 0.1f, 1.0f) : ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+        
         ImGui::Text("%s", label); ImGui::SameLine(25.0f);
-        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, color);
-        ImGui::ProgressBar(fraction, ImVec2(-1.0f, 8.0f), ""); 
-        ImGui::PopStyleColor();
+        
+        ImVec2 pos = ImGui::GetCursorScreenPos();
+        ImVec2 size = ImVec2(ImGui::GetContentRegionAvail().x, 10.0f); // Meter più spesso
+        
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        // Sfondo meter
+        drawList->AddRectFilled(pos, ImVec2(pos.x + size.x, pos.y + size.y), IM_COL32(40, 40, 40, 255)); 
+        // Barra del volume in tempo reale
+        drawList->AddRectFilled(pos, ImVec2(pos.x + size.x * fraction, pos.y + size.y), ImGui::ColorConvertFloat4ToU32(color));
+        
+        // Indicatore linea di Picco
+        if (holdFraction > 0.0f) {
+            float hx = pos.x + size.x * holdFraction;
+            drawList->AddLine(ImVec2(hx, pos.y), ImVec2(hx, pos.y + size.y), IM_COL32(255, 255, 255, 255), 2.0f);
+        }
+        ImGui::Dummy(size);
     };
+
     drawDbMeter("L", audioData.peakL, peakHoldL);
     drawDbMeter("R", audioData.peakR, peakHoldR);
 
@@ -421,6 +459,10 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         #endif
     }
     
+    // Testo BPM a destra (allineato sulla stessa riga della registrazione)
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70.0f);
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%3.0f BPM", audioData.bpm);
+    
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     
     ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "CONFIGURAZIONE LIVE");
@@ -444,8 +486,8 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
 
     ImGui::Text("Colori/Palette Attivi:");
     if (state.colorMode == 0) {
-        const char* colors[] = {"Bianco", "Nero", "Rosso", "Verde", "Blu", "Viola", "Giallo", "Arancione"};
-        for (int i = 0; i < 8; i++) {
+        const char* colors[] = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow"};        
+        for (int i = 0; i < 7; i++) {
             bool active = std::find(state.activePalettes.begin(), state.activePalettes.end(), colors[i]) != state.activePalettes.end();
             if (ImGui::Checkbox(colors[i], &active)) {
                 if (active) state.activePalettes.push_back(colors[i]);
@@ -487,11 +529,20 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "AUTO MODE & MACHINE LEARNING");
+    
+    // Bottone Show Reasoning allineato a destra
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 140.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button, state.showReasoningWindow ? ImVec4(0.2f, 0.6f, 0.8f, 1.0f) : ImVec4(0.2f, 0.3f, 0.4f, 1.0f));
+    if (ImGui::Button("Show Reasoning", ImVec2(140.0f, 0.0f))) {
+        state.showReasoningWindow = !state.showReasoningWindow;
+    }
+    ImGui::PopStyleColor();
     ImGui::Separator();
     
     ImGui::Checkbox("Auto Mode (M)", &state.isAutoMode);
     ImGui::SameLine();
 
+    // Import/Dataset
     static std::vector<std::string> datasetFiles;
     static std::string currentDataset = "knn_dataset.csv";
     static bool needDatasetRefresh = true;
@@ -527,24 +578,22 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 needDatasetRefresh = true;
                 currentDataset = dest.filename().string();
                 knnClassifier.loadDataset(dest.string());
-            } catch (const std::exception& e) {
-                std::cerr << "Errore import dataset: " << e.what() << "\n";
-            }
+            } catch (...) {}
         }
     }
     ImGui::SameLine();
-    if (ImGui::Button("Create Preset")) {
-        openCreateDatasetModal = true;
-    }
+    if (ImGui::Button("Create Preset")) openCreateDatasetModal = true;
 
     ImGui::Dummy(ImVec2(0, 5));
-    struct ConfData { SongDynamic dyn; float val; ImU32 col; const char* name; };
-    std::vector<ConfData> confs = {
-        {VERSE, pred.confVerse, IM_COL32(0, 255, 0, 255), "VERSE"},
-        {BUILD, pred.confBuild, IM_COL32(255, 255, 0, 255), "BUILD"},
-        {CHORUS, pred.confChorus, IM_COL32(255, 0, 0, 255), "CHORUS"}
-    };
-    std::sort(confs.begin(), confs.end(), [](const ConfData& a, const ConfData& b) { return a.val > b.val; });
+    
+    // ----------------------------------------------------
+    // BARRA PROPORZIONALE LOW / MID / HIGH (Filtro Finale)
+    // ----------------------------------------------------
+    float sLow = state.smoothedScores[0];
+    float sMid = state.smoothedScores[1];
+    float sHigh = state.smoothedScores[2];
+    float sTot = sLow + sMid + sHigh;
+    if (sTot < 0.0001f) sTot = 1.0f; // Evita divisioni per 0
 
     ImVec2 barPos = ImGui::GetCursorScreenPos();
     float barWidth = ImGui::GetContentRegionAvail().x;
@@ -552,27 +601,34 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     float currentX = barPos.x;
     ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-    for (const auto& c : confs) {
-        float w = barWidth * c.val;
+    auto drawSegment = [&](float val, ImU32 col) {
+        float w = barWidth * (val / sTot);
         if (w > 0) {
-            drawList->AddRectFilled(ImVec2(currentX, barPos.y), ImVec2(currentX + w, barPos.y + barHeight), c.col);
+            drawList->AddRectFilled(ImVec2(currentX, barPos.y), ImVec2(currentX + w, barPos.y + barHeight), col);
             currentX += w;
         }
-    }
+    };
+
+    // Verde (Low), Arancione (Mid), Rosso (High)
+    drawSegment(sLow, IM_COL32(40, 180, 80, 255));   
+    drawSegment(sMid, IM_COL32(240, 160, 20, 255));  
+    drawSegment(sHigh, IM_COL32(220, 40, 40, 255));  
     ImGui::Dummy(ImVec2(barWidth, barHeight));
 
+    // Testi Informativi Fasi Finali
     auto getDynName = [](SongDynamic d) -> const char* {
-        if (d == VERSE) return "VERSE";
-        if (d == BUILD) return "BUILD";
-        if (d == CHORUS) return "CHORUS";
+        if (d == VERSE) return "LOW";
+        if (d == BUILD) return "MID";
+        if (d == CHORUS) return "HIGH";
         return "MANUAL";
     };
 
-    ImGui::Text("Current Label: [%s] %.0f%%", confs[0].name, confs[0].val * 100.0f);
-    ImGui::SameLine(ImGui::GetWindowWidth() / 2.0f);
-    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Active Label: [%s]", getDynName(state.currentSongDynamicTarget));
+    int displayBeats = static_cast<int>(state.masterPhraseBeats);
+    ImGui::Text("Master Grid Phrase: %d / 32", displayBeats);
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 220.0f);
+    ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Final Graphics State: [%s]", getDynName(state.currentSongDynamicTarget));
 
-    ImGui::EndChild();
+    ImGui::EndChild(); // Chiude MonitoringAuto
     
     ImGui::EndChild();
     
@@ -611,9 +667,9 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                     }
                 } else {
                     ImGui::Columns(3, "BgCols", true);
-                    ImGui::Text("VERSE"); ImGui::NextColumn();
-                    ImGui::Text("BUILD"); ImGui::NextColumn();
-                    ImGui::Text("CHORUS & MANUAL"); ImGui::NextColumn();
+                    ImGui::Text("LOW (VERSE)"); ImGui::NextColumn();
+                    ImGui::Text("MID (BUILD)"); ImGui::NextColumn();
+                    ImGui::Text("HIGH (CHORUS & MANUAL)"); ImGui::NextColumn();
                     ImGui::Separator();
                     
                     std::map<std::string, std::vector<std::string>> verseMap, buildMap, chorusMap;
@@ -774,7 +830,6 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 ImVec2 p = ImGui::GetCursorScreenPos();
                 ImDrawList* drawList = ImGui::GetWindowDrawList();
                 
-                // Disegna sfondo "Schermo"
                 drawList->AddRectFilled(p, ImVec2(p.x + canvasSize.x, p.y + canvasSize.y), IM_COL32(20, 20, 20, 255));
                 
                 if (tex != 0) {
@@ -799,19 +854,22 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::EndChild(); 
     ImGui::Columns(1);
     
-    const char* colorNames[] = {"Nessuno", "Bianco", "Nero", "Rosso", "Verde", "Blu", "Viola", "Giallo", "Arancione"};
+    const char* colorNames[] = {"Nessuno", "White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow"};
     auto renderColorDropdown = [&](const char* label, std::string& currentColor) {
         int currentIdx = 0;
-        for (int i = 1; i < 9; i++) {
+        for (int i = 1; i < 8; i++) {
             if (currentColor == colorNames[i]) { currentIdx = i; break; }
         }
-        if (ImGui::Combo(label, &currentIdx, "Nessuno\0Bianco\0Nero\0Rosso\0Verde\0Blu\0Viola\0Giallo\0Arancione\0")) {
+        if (ImGui::Combo(label, &currentIdx, "Nessuno\0White\0Red\0Green\0Blue\0Cyan\0Magenta\0Yellow\0")) {
             currentColor = (currentIdx == 0) ? "" : colorNames[currentIdx];
         }
     };
 
+    // -------------------------------------------------------------
+    // MODALITA' TRAINING - 9 CLASSI E 14 FEATURE
+    // -------------------------------------------------------------
     if (openCreateDatasetModal) ImGui::OpenPopup("Create Dataset Preset");
-    ImGui::SetNextWindowSizeConstraints(ImVec2(500, 400), ImVec2(FLT_MAX, FLT_MAX));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(800, 600), ImVec2(FLT_MAX, FLT_MAX)); // Finestra allargata
     if (ImGui::BeginPopupModal("Create Dataset Preset", NULL, ImGuiWindowFlags_AlwaysAutoResize)) {
         static char newDatasetName[128] = "new_dataset";
         ImGui::InputText("Nome Preset", newDatasetName, sizeof(newDatasetName));
@@ -824,41 +882,97 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             ImGui::PopStyleColor();
         };
 
-        ImGui::Text("Audio Features (Real-Time)");
-        drawCompactMeter("RMS (Volume)", audioData.rms, ImVec4(0.9f, 0.9f, 0.9f, 1.0f)); 
+        ImGui::Text("Audio Features EMA (I dati che il KNN sta effettivamente leggendo)");
+        ImGui::Separator();
         
-        ImGui::Columns(2, "KNNFeaturesGrid", false);
-        drawCompactMeter("SubBass",      audioData.bandSubBass, ImVec4(0.6f, 0.2f, 0.8f, 1.0f)); 
-        drawCompactMeter("Bass",         audioData.bandBass, ImVec4(0.8f, 0.3f, 0.3f, 1.0f)); 
+        // Layout a 3 colonne per far stare 14 feature comodamente
+        ImGui::Columns(3, "KNNFeaturesGrid", false);
+        
+        // Colonna 1: Temporali & Generali
+        drawCompactMeter("RMS (Volume)", state.emaFeatures[0], ImVec4(0.9f, 0.9f, 0.9f, 1.0f)); 
+        drawCompactMeter("ZCR (Snare/Noise)", state.emaFeatures[1], ImVec4(1.0f, 0.5f, 0.0f, 1.0f)); 
+        drawCompactMeter("Crest (Impulsi)", state.emaFeatures[2], ImVec4(0.8f, 0.2f, 0.2f, 1.0f)); 
+        drawCompactMeter("Spec Flux", state.emaFeatures[3], ImVec4(1.0f, 0.2f, 0.8f, 1.0f)); 
+        
         ImGui::NextColumn();
-        drawCompactMeter("HighMid",      audioData.bandHighMid, ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); 
-        drawCompactMeter("Spec Flux",    audioData.spectralFlux, ImVec4(1.0f, 0.2f, 0.8f, 1.0f)); 
+        // Colonna 2: Timbrica (Spectral)
+        drawCompactMeter("Centroid (Luminosita')", state.emaFeatures[4] / 10000.0f, ImVec4(1.0f, 0.8f, 0.0f, 1.0f)); 
+        drawCompactMeter("Spread (Rumore)", state.emaFeatures[5] / 5000.0f, ImVec4(0.5f, 0.5f, 0.5f, 1.0f)); 
+        drawCompactMeter("Rolloff (Lead/Synth)", state.emaFeatures[6] / 15000.0f, ImVec4(0.0f, 0.8f, 1.0f, 1.0f)); 
+        drawCompactMeter("SubBass (20-60Hz)", state.emaFeatures[7], ImVec4(0.6f, 0.2f, 0.8f, 1.0f)); 
+        drawCompactMeter("Bass (60-250Hz)", state.emaFeatures[8], ImVec4(0.8f, 0.3f, 0.3f, 1.0f)); 
+        
+        ImGui::NextColumn();
+        // Colonna 3: Bande Alte
+        drawCompactMeter("LowMid (250-500Hz)", state.emaFeatures[9], ImVec4(0.2f, 0.8f, 1.0f, 1.0f)); 
+        drawCompactMeter("Mid (0.5-2kHz)", state.emaFeatures[10], ImVec4(0.2f, 1.0f, 0.2f, 1.0f)); 
+        drawCompactMeter("HighMid (2-4kHz)", state.emaFeatures[11], ImVec4(0.4f, 1.0f, 0.6f, 1.0f)); 
+        drawCompactMeter("Presence (4-6kHz)", state.emaFeatures[12], ImVec4(0.8f, 1.0f, 0.2f, 1.0f)); 
+        drawCompactMeter("Brilliance (6-20kHz)", state.emaFeatures[13], ImVec4(1.0f, 1.0f, 0.5f, 1.0f)); 
+        
         ImGui::Columns(1);
 
         ImGui::Dummy(ImVec2(0, 15));
-        ImGui::Text("Acquisizione Dati (Tieni premuto per registrare campioni)");
+        ImGui::Text("Acquisizione Dati (9 Classi Ortogonali)");
         ImGui::Separator();
         
-        static int countVerse = 0, countBuild = 0, countChorus = 0;
-        
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.8f, 0.2f, 1.0f));
-        if (ImGui::Button("Rec VERSE", ImVec2(150, 40))) { knnClassifier.addSample(audioData, VERSE); countVerse++; }
-        ImGui::PopStyleColor();
-        ImGui::SameLine(); ImGui::Text("Campioni: %d", countVerse);
+        static int classCounts[9] = {0};
+        const char* classNames[9] = {
+            "EMPTY_PAD", "LGT_RHYTHM", "VOCAL_AMB", 
+            "B_SNARE", "B_ACID", "B_MELODIC", 
+            "D_RAW", "D_MELODIC", "BRIDGE"
+        };
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.8f, 0.2f, 1.0f));
-        if (ImGui::Button("Rec BUILD", ImVec2(150, 40))) { knnClassifier.addSample(audioData, BUILD); countBuild++; }
-        ImGui::PopStyleColor();
-        ImGui::SameLine(); ImGui::Text("Campioni: %d", countBuild);
+        ImVec4 classColors[9] = {
+            // LOW
+            ImVec4(0.00f, 0.70f, 0.30f, 1.0f), // PAD
+            ImVec4(0.40f, 0.90f, 0.40f, 1.0f), // RHYTHM
+            ImVec4(0.00f, 0.80f, 0.80f, 1.0f), // VOCAL
+            // MID
+            ImVec4(1.00f, 0.50f, 0.05f, 1.0f), // SNARE
+            ImVec4(1.00f, 0.20f, 0.60f, 1.0f), // ACID
+            ImVec4(0.60f, 0.20f, 0.85f, 1.0f), // MELODIC
+            // HIGH
+            ImVec4(0.90f, 0.10f, 0.10f, 1.0f), // D_RAW
+            ImVec4(0.60f, 0.00f, 0.00f, 1.0f), // D_MEL
+            ImVec4(1.00f, 0.85f, 0.10f, 1.0f)  // BRIDGE
+        };
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.2f, 0.2f, 1.0f));
-        if (ImGui::Button("Rec CHORUS", ImVec2(150, 40))) { knnClassifier.addSample(audioData, CHORUS); countChorus++; }
-        ImGui::PopStyleColor();
-        ImGui::SameLine(); ImGui::Text("Campioni: %d", countChorus);
+        ImGui::Columns(3, "TrainCols", false); // 3 colonne per i bottoni
+        for(int i = 0; i < 9; ++i) {
+            ImGui::PushStyleColor(ImGuiCol_Button, classColors[i]);
+            
+            if (ImGui::Button((std::string("Rec ") + classNames[i]).c_str(), ImVec2(160, 45))) { 
+                
+                AudioMetrics sampleToSave = audioData;
+                sampleToSave.rms              = state.emaFeatures[0];
+                sampleToSave.zcr              = state.emaFeatures[1];
+                sampleToSave.crestFactor      = state.emaFeatures[2];
+                sampleToSave.spectralFlux     = state.emaFeatures[3];
+                sampleToSave.spectralCentroid = state.emaFeatures[4];
+                sampleToSave.spectralSpread   = state.emaFeatures[5];
+                sampleToSave.spectralRolloff  = state.emaFeatures[6];
+                sampleToSave.bandSubBass      = state.emaFeatures[7];
+                sampleToSave.bandBass         = state.emaFeatures[8];
+                sampleToSave.bandLowMid       = state.emaFeatures[9];
+                sampleToSave.bandMid          = state.emaFeatures[10];
+                sampleToSave.bandHighMid      = state.emaFeatures[11];
+                sampleToSave.bandPresence     = state.emaFeatures[12];
+                sampleToSave.bandBrilliance   = state.emaFeatures[13];
+
+                knnClassifier.addSample(sampleToSave, static_cast<AiTrainingLabel>(i)); 
+                classCounts[i]++; 
+            }
+            
+            ImGui::PopStyleColor();
+            ImGui::SameLine(); ImGui::Text("%d", classCounts[i]);
+            ImGui::NextColumn();
+        }
+        ImGui::Columns(1);
 
         ImGui::Dummy(ImVec2(0, 20));
         if (ImGui::Button("Annulla")) {
-            countVerse = countBuild = countChorus = 0;
+            for(int i=0; i<9; i++) classCounts[i] = 0;
             knnClassifier.clearTemporaryDataset(); 
             knnClassifier.loadDataset("datasets/" + currentDataset); 
             ImGui::CloseCurrentPopup();
@@ -870,7 +984,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             knnClassifier.saveDataset(destPath);
             currentDataset = std::string(newDatasetName) + ".csv";
             needDatasetRefresh = true;
-            countVerse = countBuild = countChorus = 0;
+            for(int i=0; i<9; i++) classCounts[i] = 0;
             ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -1530,6 +1644,182 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         currentHoverPath = "";
         pendingHoverPath = "";
         hoverStartTime = 0.0;
+    }
+
+    // -------------------------------------------------------------
+    // AI REASONING DEBUGGER WINDOW (Fuori dal main flow e popups)
+    // -------------------------------------------------------------
+    if (state.showReasoningWindow) {
+        ImGui::Begin("AI Reasoning Debugger", &state.showReasoningWindow);
+        ImGui::Text("Feature Extraction (EMA a 4-Beat)");
+        ImGui::Columns(3, "FeaturesCols", false);
+        ImGui::Text("RMS: %.3f", state.emaFeatures[0]);
+        ImGui::Text("ZCR: %.3f", state.emaFeatures[1]);
+        ImGui::Text("Crest: %.3f", state.emaFeatures[2]);
+        ImGui::Text("Flux: %.3f", state.emaFeatures[3]);
+        ImGui::NextColumn();
+        ImGui::Text("Centroid: %.0f Hz", state.emaFeatures[4]);
+        ImGui::Text("Spread: %.0f Hz", state.emaFeatures[5]);
+        ImGui::Text("Rolloff: %.0f Hz", state.emaFeatures[6]);
+        ImGui::NextColumn();
+        ImGui::Text("Sub/Bass: %.2f / %.2f", state.emaFeatures[7], state.emaFeatures[8]);
+        ImGui::Text("Mid/High: %.2f / %.2f", state.emaFeatures[10], state.emaFeatures[11]);
+        ImGui::Columns(1);
+        ImGui::Separator();
+        
+        ImGui::Text("Livello 1: Storico Probabilita' (9 Classi)");
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        float historyWidth = 300.0f;
+        float barH = 10.0f;
+        
+        ImU32 debugColors[9] = {
+            IM_COL32(0, 200, 100, 255),   // 0: EMPTY_PAD
+            IM_COL32(100, 255, 150, 255), // 1: LIGHT_RHYTHM
+            IM_COL32(0, 100, 255, 255),   // 2: VOCAL_AMBIENT
+            IM_COL32(255, 165, 0, 255),   // 3: BUILD_SNARE
+            IM_COL32(255, 50, 200, 255),  // 4: BUILD_ACID
+            IM_COL32(200, 100, 255, 255), // 5: BUILD_MELODIC
+            IM_COL32(255, 0, 0, 255),     // 6: DROP_RAW
+            IM_COL32(200, 0, 0, 255),     // 7: DROP_MELODIC
+            IM_COL32(255, 255, 0, 255)    // 8: BRIDGE
+        };
+        
+        for (size_t t = 0; t < state.historyBuffer.size(); ++t) {
+            float currentX = p.x;
+            for (int i = 0; i < 9; ++i) {
+                float w = state.historyBuffer[t][i] * historyWidth;
+                if (w > 0) {
+                    drawList->AddRectFilled(ImVec2(currentX, p.y + t*barH), ImVec2(currentX + w, p.y + (t+1)*barH), debugColors[i]);
+                    currentX += w;
+                }
+            }
+        }
+        ImGui::Dummy(ImVec2(historyWidth, state.historyBuffer.size() * barH));
+        
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(0.5f, 0.8f, 1.0f, 1.0f), "Routing Dinamico: Classe BRIDGE");
+        
+        float rawBridge = state.rawProbabilities[7]; // Indice 7 = BRIDGE
+        float pLow = rawBridge * (1.0f - state.bridgeToHighFactor);
+        float pHigh = rawBridge * state.bridgeToHighFactor;
+        
+        ImGui::Text("RMS Attuale (EMA): %.2f", state.lastRmsUsed);
+        
+        // Disegna una progress bar custom per mostrare quanto Bridge va in High
+        ImGui::Text("Distribuzione BRIDGE (Tot: %.1f%%):", rawBridge * 100.0f);
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(242, 38, 38, 255)); // Rosso per HIGH
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, IM_COL32(0, 150, 50, 100));        // Verde scuro per LOW
+        ImGui::ProgressBar(state.bridgeToHighFactor, ImVec2(150.0f, 15.0f), "");
+        ImGui::PopStyleColor(2);
+        
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), " -> %.1f%% dirottato su LOW", pLow * 100.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), " -> %.1f%% dirottato su HIGH", pHigh * 100.0f);
+
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.6f, 1.0f, 1.0f), "Indice di Confidenza KNN (Purezza)");
+        
+        // Colore dinamico: Rosso se confuso (bassa reattività), Verde se sicuro (alta reattività)
+        ImVec4 confColor = (state.currentConfidence < 0.3f) ? ImVec4(1.0f, 0.2f, 0.2f, 1.0f) : 
+                           (state.currentConfidence < 0.7f) ? ImVec4(1.0f, 1.0f, 0.2f, 1.0f) : 
+                                                              ImVec4(0.2f, 1.0f, 0.2f, 1.0f);
+                                                              
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, confColor);
+        ImGui::ProgressBar(state.currentConfidence, ImVec2(-1, 15.0f), "");
+        ImGui::PopStyleColor();
+        
+        if (state.currentConfidence < 0.1f) {
+            ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "Stato: CONFUSO (Filtro Congelato)");
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Stato: OK (Filtro Reattivo)");
+        }
+
+        ImGui::Separator();
+        // Ricalcolo al volo per la UI del valore di conflitto
+        float rawLow = state.rawProbabilities[0] + state.rawProbabilities[1] + state.rawProbabilities[6] + (state.rawProbabilities[7] * (1.0f - state.bridgeToHighFactor));
+        float rawHigh = state.rawProbabilities[4] + state.rawProbabilities[5] + (state.rawProbabilities[7] * state.bridgeToHighFactor);
+        float conflict = std::min(rawLow, rawHigh);
+        
+        if (conflict > 0.05f) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Cancellazione Attiva: %.1f%% spostata da Estremi a MID", conflict * 100.0f);
+        } else {
+            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "Segnale Estremi Pulito");
+        }
+
+        ImGui::Separator();
+        ImGui::Text("Livello 2: Raggruppamento (RAW) -> Filtro Asimmetrico (SMOOTHED)");
+        
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), "LOW  | Raw: %5.1f%%  ->  Smooth: %5.1f%%", state.targetProbabilities[0] * 100.0f, state.smoothedScores[0] * 100.0f); 
+        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.2f, 1.0f), "MID  | Raw: %5.1f%%  ->  Smooth: %5.1f%%", state.targetProbabilities[1] * 100.0f, state.smoothedScores[1] * 100.0f); 
+        ImGui::TextColored(ImVec4(1.0f, 0.2f, 0.2f, 1.0f), "HIGH | Raw: %5.1f%%  ->  Smooth: %5.1f%%", state.targetProbabilities[2] * 100.0f, state.smoothedScores[2] * 100.0f);
+        
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f), "Livello 3: Logica Temporale & Fiducia (Fase: %d beat)", state.beatsSinceLastChange);
+        
+        // SOGLIA FISSA
+        float min_threshold = 0.60f;
+        
+        int bestIdx = 0;
+        float maxScore = state.smoothedScores[0];
+        if (state.smoothedScores[1] > maxScore) { bestIdx = 1; maxScore = state.smoothedScores[1]; }
+        if (state.smoothedScores[2] > maxScore) { bestIdx = 2; maxScore = state.smoothedScores[2]; }
+        const char* bestName = (bestIdx == 0) ? "LOW" : (bestIdx == 1) ? "MID" : "HIGH";
+        
+        ImGui::Text("Candidato Leader (%s): %.1f%% (Richiesto: %.0f%%)", bestName, maxScore * 100.0f, min_threshold * 100.0f);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(0, 200, 255, 255));
+        ImGui::ProgressBar(maxScore, ImVec2(-1, 8.0f), "");
+        ImGui::PopStyleColor();
+        
+        // DEBOUNCING INFO
+        ImGui::Dummy(ImVec2(0, 5));
+        ImGui::Text("Penalita' Prossimo Cambio: %d Beats", state.currentPenaltyBeats);
+        
+        // Barra di stabilità (Raffreddamento)
+        ImGui::Text("Buona condotta (Dimezza penalita' a 8): %.1f / 8.0 Beats", state.fractionalPenaltyCounter);
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(0, 255, 100, 255)); // Verde per la stabilità
+        ImGui::ProgressBar(state.fractionalPenaltyCounter / 8.0f, ImVec2(-1, 4.0f), "");
+        ImGui::PopStyleColor();
+        
+        int currentIdx = (state.currentSongDynamicTarget == VERSE) ? 0 : (state.currentSongDynamicTarget == BUILD) ? 1 : 2;
+        
+        if (bestIdx != currentIdx && maxScore >= min_threshold) {
+            ImGui::Dummy(ImVec2(0, 5));
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), "-> Cambio in attesa: Valutazione %.1f / %d Beats", state.fractionalWaitCounter, state.currentPenaltyBeats);
+            ImGui::PushStyleColor(ImGuiCol_PlotHistogram, IM_COL32(255, 255, 0, 255));
+            float waitProgress = (state.currentPenaltyBeats > 0) ? (state.fractionalWaitCounter / state.currentPenaltyBeats) : 1.0f;
+            ImGui::ProgressBar(waitProgress, ImVec2(-1, 8.0f), "");
+            ImGui::PopStyleColor();
+        } else if (bestIdx != currentIdx) {
+            ImGui::Dummy(ImVec2(0, 5));
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "-> %s non raggiunge la soglia minima del %.0f%%.", bestName, min_threshold * 100.0f);
+        } else {
+            ImGui::Dummy(ImVec2(0, 5));
+            ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.0f, 1.0f), "-> AI Stabile sul target attuale.");
+        }
+        
+        ImGui::Separator();
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.0f, 1.0f), "Livello 4: Registrazione Dati & Ground Truth");
+        
+        // Toggle per il Logging
+        if (ImGui::Checkbox("Registra log su file (ai_reasoning_log.csv)", &state.isLoggingEnabled)) {
+            if (state.isLoggingEnabled) {
+                state.startAiLogging("ai_reasoning_log.csv");
+            } else {
+                state.stopAiLogging();
+            }
+        }
+        
+        ImGui::Dummy(ImVec2(0.0f, 5.0f));
+        ImGui::Text("Cosa dovrebbe essere in esecuzione ORA?");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "(Usa questi tasti per taggare i dati per l'analisi)");
+        
+        int expected = (state.expectedSongDynamicTarget == VERSE) ? 0 : (state.expectedSongDynamicTarget == BUILD) ? 1 : 2;
+        if (ImGui::RadioButton("LOW (Expected)", expected == 0)) state.expectedSongDynamicTarget = VERSE; ImGui::SameLine();
+        if (ImGui::RadioButton("MID (Expected)", expected == 1)) state.expectedSongDynamicTarget = BUILD; ImGui::SameLine();
+        if (ImGui::RadioButton("HIGH (Expected)", expected == 2)) state.expectedSongDynamicTarget = CHORUS;
+
+        ImGui::End();
     }
 
     ImGui::End(); 

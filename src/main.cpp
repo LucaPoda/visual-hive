@@ -8,6 +8,7 @@
 #include <thread>
 #include <chrono>
 #include <deque>
+#include <array>
 
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_GLCOREARB
@@ -84,24 +85,21 @@ int main() {
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
 
     int beatsSinceLastChange = 0;
-    
-    std::deque<SongDynamic> labelHistory;
-    const size_t HISTORY_SIZE = config.knnHistorySize; 
-
-    SongDynamic stablePrediction = BUILD; 
-    SongDynamic candidatePrediction = BUILD;
-    int consecutiveFrames = 0;
-    int stableFramesCount = 0; 
-    
-    std::map<SongDynamic, int> baseDebounce = {
-        {VERSE, config.debounceVerse},  
-        {BUILD, config.debounceBuild},  
-        {CHORUS, config.debounceChorus}   
-    };
 
     try {
         RuntimeState state(assetManager);
         std::cout << "[INFO] System initialized. Starting loop.\n";
+
+        // --- TIMERS E ACCUMULATORI FUORI DAL CICLO WHILE ---
+        auto lastAudioTime = std::chrono::steady_clock::now();
+        double lastAiUpdateTime = glfwGetTime(); 
+        
+        // Accumulatore dei picchi per il frame corrente (Max Pooling)
+        AudioMetrics peakAccumulator;
+        auto resetAccumulator = [&peakAccumulator]() { peakAccumulator = AudioMetrics(); };
+        
+        // Buffer per le ultime 8 finestre da 1/8 di nota (1 battuta intera)
+        std::deque<AudioMetrics> beatHistoryBuffer;
 
         while (!graphics.shouldCloseUI()) {
             
@@ -113,77 +111,151 @@ int main() {
                 beatsSinceLastChange++;
             }
 
-            KNNPrediction pred = { MANUAL, 0, 0, 0 };
-            if (state.isAutoMode) {
-                pred = knnClassifier.predict(audioData);
-                
-                std::optional<SongDynamic> highConfLabel = std::nullopt;
-                if (pred.confVerse >= 0.80f) highConfLabel = VERSE;
-                else if (pred.confBuild >= 0.80f) highConfLabel = BUILD;
-                else if (pred.confChorus >= 0.80f) highConfLabel = CHORUS;
+            // 1. MAX POOLING: Tratteniamo i picchi massimi estratti a 86 Hz
+            peakAccumulator.rms = std::max(peakAccumulator.rms, audioData.rms);
+            peakAccumulator.zcr = std::max(peakAccumulator.zcr, audioData.zcr);
+            peakAccumulator.crestFactor = std::max(peakAccumulator.crestFactor, audioData.crestFactor);
+            peakAccumulator.spectralFlux = std::max(peakAccumulator.spectralFlux, audioData.spectralFlux);
+            peakAccumulator.spectralCentroid = std::max(peakAccumulator.spectralCentroid, audioData.spectralCentroid);
+            peakAccumulator.spectralSpread = std::max(peakAccumulator.spectralSpread, audioData.spectralSpread);
+            peakAccumulator.spectralRolloff = std::max(peakAccumulator.spectralRolloff, audioData.spectralRolloff);
+            peakAccumulator.bandSubBass = std::max(peakAccumulator.bandSubBass, audioData.bandSubBass);
+            peakAccumulator.bandBass = std::max(peakAccumulator.bandBass, audioData.bandBass);
+            peakAccumulator.bandLowMid = std::max(peakAccumulator.bandLowMid, audioData.bandLowMid);
+            peakAccumulator.bandMid = std::max(peakAccumulator.bandMid, audioData.bandMid);
+            peakAccumulator.bandHighMid = std::max(peakAccumulator.bandHighMid, audioData.bandHighMid);
+            peakAccumulator.bandPresence = std::max(peakAccumulator.bandPresence, audioData.bandPresence);
+            peakAccumulator.bandBrilliance = std::max(peakAccumulator.bandBrilliance, audioData.bandBrilliance);
 
-                if (highConfLabel.has_value()) {
-                    if (highConfLabel.value() == candidatePrediction) {
-                        consecutiveFrames++;
-                    } else {
-                        candidatePrediction = highConfLabel.value();
-                        consecutiveFrames = 1;
-                        stableFramesCount = 0; 
-                    }
+            KNNPrediction pred;
+            pred.probabilities.fill(0.0f);
 
-                    int requiredFrames = baseDebounce[candidatePrediction];
+            double currentAppTime = glfwGetTime();
+
+            // 2. TIMING DINAMICO BPM-LOCKED (2x BPM = 1/8 di nota)
+            float currentBpm = (audioData.bpm > 30.0f) ? audioData.bpm : 128.0f;
+            double aiUpdateInterval = 60.0 / (currentBpm * 2.0); 
+
+            if (currentAppTime - lastAiUpdateTime >= aiUpdateInterval) {
+                lastAiUpdateTime = currentAppTime;
+
+                peakAccumulator.bpm = currentBpm;
+                peakAccumulator.peakL = audioData.peakL;
+                peakAccumulator.peakR = audioData.peakR;
+
+                // Aggiungiamo i picchi di questo 1/8 di nota al buffer (Max 8 elementi)
+                beatHistoryBuffer.push_front(peakAccumulator);
+                if (beatHistoryBuffer.size() > 8) beatHistoryBuffer.pop_back();
+
+                // 3. MEDIA ESPONENZIALE SULLE 8 FINESTRE (Decadimento)
+                AudioMetrics smoothedMetrics = peakAccumulator; // Copia per bpm e picchi assoluti
+                smoothedMetrics.rms = 0; smoothedMetrics.zcr = 0; smoothedMetrics.crestFactor = 0;
+                smoothedMetrics.spectralFlux = 0; smoothedMetrics.spectralCentroid = 0;
+                smoothedMetrics.spectralSpread = 0; smoothedMetrics.spectralRolloff = 0;
+                smoothedMetrics.bandSubBass = 0; smoothedMetrics.bandBass = 0; smoothedMetrics.bandLowMid = 0;
+                smoothedMetrics.bandMid = 0; smoothedMetrics.bandHighMid = 0; smoothedMetrics.bandPresence = 0;
+                smoothedMetrics.bandBrilliance = 0;
+
+                float weightSum = 0.0f;
+                float currentWeight = 1.0f;
+                const float decayFactor = 0.65f; // Il campione precedente vale il 65% di quello attuale
+
+                for (const auto& sample : beatHistoryBuffer) {
+                    smoothedMetrics.rms += sample.rms * currentWeight;
+                    smoothedMetrics.zcr += sample.zcr * currentWeight;
+                    smoothedMetrics.crestFactor += sample.crestFactor * currentWeight;
+                    smoothedMetrics.spectralFlux += sample.spectralFlux * currentWeight;
+                    smoothedMetrics.spectralCentroid += sample.spectralCentroid * currentWeight;
+                    smoothedMetrics.spectralSpread += sample.spectralSpread * currentWeight;
+                    smoothedMetrics.spectralRolloff += sample.spectralRolloff * currentWeight;
+                    smoothedMetrics.bandSubBass += sample.bandSubBass * currentWeight;
+                    smoothedMetrics.bandBass += sample.bandBass * currentWeight;
+                    smoothedMetrics.bandLowMid += sample.bandLowMid * currentWeight;
+                    smoothedMetrics.bandMid += sample.bandMid * currentWeight;
+                    smoothedMetrics.bandHighMid += sample.bandHighMid * currentWeight;
+                    smoothedMetrics.bandPresence += sample.bandPresence * currentWeight;
+                    smoothedMetrics.bandBrilliance += sample.bandBrilliance * currentWeight;
                     
-                    if (stableFramesCount > 60) {
-                        requiredFrames = 2; 
-                    } else if (stableFramesCount > 30) {
-                        requiredFrames = std::max(3, requiredFrames / 2); 
-                    }
-
-                    if (consecutiveFrames >= requiredFrames) {
-                        stablePrediction = candidatePrediction;
-                        consecutiveFrames = 0; 
-                    }
-                } else {
-                    consecutiveFrames = 0;
+                    weightSum += currentWeight;
+                    currentWeight *= decayFactor;
                 }
 
-                if (stablePrediction == state.currentSongDynamicTarget) {
-                    stableFramesCount++;
-                } else {
-                    stableFramesCount = 0; 
-                }
+                // Normalizzazione per la somma dei pesi
+                smoothedMetrics.rms /= weightSum;
+                smoothedMetrics.zcr /= weightSum;
+                smoothedMetrics.crestFactor /= weightSum;
+                smoothedMetrics.spectralFlux /= weightSum;
+                smoothedMetrics.spectralCentroid /= weightSum;
+                smoothedMetrics.spectralSpread /= weightSum;
+                smoothedMetrics.spectralRolloff /= weightSum;
+                smoothedMetrics.bandSubBass /= weightSum;
+                smoothedMetrics.bandBass /= weightSum;
+                smoothedMetrics.bandLowMid /= weightSum;
+                smoothedMetrics.bandMid /= weightSum;
+                smoothedMetrics.bandHighMid /= weightSum;
+                smoothedMetrics.bandPresence /= weightSum;
+                smoothedMetrics.bandBrilliance /= weightSum;
 
-                if (beatsSinceLastChange >= 32) {
-                    state.triggerAutoSwitch(assetManager.getAssets()); 
-                    beatsSinceLastChange = 0;
-                } 
-                else if (beatsSinceLastChange >= 4) {
-                    if (stablePrediction != state.currentSongDynamicTarget) {
-                        state.currentSongDynamicTarget = stablePrediction;
+                // L'AI estrae le metriche normalizzate (e alimenta il Debugger istantaneamente)
+                AudioMetrics normalizedMetrics = state.normalizeAndGetMetrics(smoothedMetrics);
+
+                // La predizione ora avviene sempre ed usa "normalizedMetrics"
+                pred = knnClassifier.predict(normalizedMetrics);
+                state.rawProbabilities = pred.probabilities;
+                
+                state.historyBuffer.push_back(state.rawProbabilities);
+                if (state.historyBuffer.size() > 32) state.historyBuffer.erase(state.historyBuffer.begin());
+
+                SongDynamic prevTarget = state.currentSongDynamicTarget;
+                
+                state.updateAiStateMachine(smoothedMetrics, pred);
+
+                // L'esecuzione (cambio visual) avviene SOLO in Auto Mode
+                if (state.isAutoMode) {
+                    if (prevTarget != state.currentSongDynamicTarget) {
                         state.triggerAutoSwitch(assetManager.getAssets());
-                        beatsSinceLastChange = 0;
-                        consecutiveFrames = 0; 
+                    } 
+                    else if (state.masterPhraseBeats >= 32.0f) {
+                        if (state.beatsSinceLastChange >= 24) state.triggerAutoSwitch(assetManager.getAssets()); 
+                        state.masterPhraseBeats -= 32.0f; 
                     }
                 }
+
+                // Reset per la prossima finestra di 1/8 di nota
+                resetAccumulator();
+            }
+            
+            ImGuiIO& io = ImGui::GetIO();
+            
+            // --- GESTIONE SILENZIO E AUTO-MODE ---
+            bool audioActive = (audioData.peakL > 0.001f || audioData.peakR > 0.001f);
+            auto nowTime = std::chrono::steady_clock::now();
+
+            if (audioActive) {
+                lastAudioTime = nowTime; 
             }
 
-            ImGuiIO& io = ImGui::GetIO();
-            bool audioActive = (audioData.peak > 0.001f);
-            
-            if (state.isAutoMode && !audioActive) {
-                state.isAutoMode = false;
-                std::cout << "[WARNING] Auto Mode disattivato (Segnale audio assente).\n";
+            if (state.isAutoMode) {
+                if (std::chrono::duration_cast<std::chrono::seconds>(nowTime - lastAudioTime).count() >= 60) {
+                    state.isAutoMode = false;
+                    std::cout << "[WARNING] Auto Mode disattivato (Assenza di segnale audio per 60 secondi).\n";
+                }
             }
 
             if (ImGui::IsKeyPressed(ImGuiKey_Escape)) break;
             if (ImGui::IsKeyPressed(ImGuiKey_Enter)) state.transitionCueToLive();
 
             if (ImGui::IsKeyPressed(ImGuiKey_M)) {
-                if (audioActive) {
-                    state.isAutoMode = !state.isAutoMode;
-                    if (state.isAutoMode) beatsSinceLastChange = 0; 
+                if (state.isAutoMode) {
+                    state.isAutoMode = false;
                 } else {
-                    std::cout << "[WARNING] Impossibile attivare Auto Mode: Nessun audio rilevato.\n";
+                    if (audioActive) {
+                        state.isAutoMode = true;
+                        beatsSinceLastChange = 0;
+                        state.triggerAutoSwitch(assetManager.getAssets()); // <- CORREZIONE: Cambio immediato
+                    } else {
+                        std::cout << "[WARNING] Impossibile attivare Auto Mode: Nessun audio rilevato.\n";
+                    }
                 }
             }
             
@@ -200,7 +272,8 @@ int main() {
                 auto bg = assetManager.getBackroundByPressedKey(keyChar);
                 auto fg = assetManager.getForegroundByPressedKey(keyChar);
 
-                if (bg.has_value()) {
+                // <- CORREZIONE: Cue sui background disabilitato in Auto Mode
+                if (bg.has_value() && !state.isAutoMode) {
                     if (isShiftPressed) state.switchCueBackground(bg.value());
                     else {
                         state.switchBackground(bg.value());

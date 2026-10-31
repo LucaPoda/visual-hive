@@ -56,7 +56,7 @@ void computeFFT(std::vector<Complex>& x) {
 }
 
 AudioAnalyzer::AudioAnalyzer() {
-    bandHistory.clear();
+    // empty
 }
 
 AudioAnalyzer::~AudioAnalyzer() {
@@ -190,26 +190,22 @@ int AudioAnalyzer::audioCallback(void* outputBuffer, void* inputBuffer, unsigned
 void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, double streamTime, float peakL, float peakR) {
     if (numFrames == 0) return;
 
+    AudioMetrics metrics;
+    metrics.peakL = peakL;
+    metrics.peakR = peakR;
+
     float sumSquares = 0.0f;
-    
     for (unsigned int i = 0; i < numFrames; i++) {
-        float sample = buffer[i];
-        sumSquares += sample * sample;
+        sumSquares += buffer[i] * buffer[i];
     }
-    float rms = std::sqrt(sumSquares / numFrames);
-    bool isBeatNow = false;
-    float detectedBpm = 0.0f;
+    metrics.rms = std::sqrt(sumSquares / numFrames);
     
     if (btrack) {
-        if (btrackBuffer.size() != numFrames) {
-            btrackBuffer.resize(numFrames);
-        }
-        for (unsigned int i = 0; i < numFrames; i++) {
-            btrackBuffer[i] = static_cast<double>(buffer[i]);
-        }
+        if (btrackBuffer.size() != numFrames) btrackBuffer.resize(numFrames);
+        for (unsigned int i = 0; i < numFrames; i++) btrackBuffer[i] = static_cast<double>(buffer[i]);
         btrack->processAudioFrame(btrackBuffer.data());
-        isBeatNow = btrack->beatDueInCurrentFrame();
-        detectedBpm = static_cast<float>(btrack->getCurrentTempoEstimate());
+        metrics.isBeat = btrack->beatDueInCurrentFrame();
+        metrics.bpm = static_cast<float>(btrack->getCurrentTempoEstimate());
     }
 
     unsigned int fftSize = 2048; 
@@ -222,129 +218,90 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
     }
     computeFFT(fftData);
 
-    float rawFlux = 0.0f;
+    if (previousMagnitudes.size() != fftSize) previousMagnitudes.assign(fftSize, 0.0f);
+    
+    std::vector<float> fftMagnitudes(fftSize / 2, 0.0f);
     float binResolution = static_cast<float>(sampleRate) / fftSize;
-    float energies[6] = {0}; 
-    int binCounts[6] = {0};
 
-    if (previousMagnitudes.size() != fftSize) {
-        previousMagnitudes.assign(fftSize, 0.0f);
-    }
-
+    metrics.spectralFlux = 0.0f;
     for (unsigned int i = 1; i < fftSize / 2; i++) {
         float magnitude = (std::abs(fftData[i]) / (fftSize / 2.0f)) * 2.0f; 
-        float freq = i * binResolution;
-        
-        if      (freq < 60.0f)   { energies[0] += magnitude; binCounts[0]++; }
-        else if (freq < 250.0f)  { energies[1] += magnitude; binCounts[1]++; }
-        else if (freq < 500.0f)  { energies[2] += magnitude; binCounts[2]++; }
-        else if (freq < 2000.0f) { energies[3] += magnitude; binCounts[3]++; }
-        else if (freq < 4000.0f) { energies[4] += magnitude; binCounts[4]++; }
-        else                     { energies[5] += magnitude; binCounts[5]++; }
-
+        fftMagnitudes[i] = magnitude;
         float diff = magnitude - previousMagnitudes[i];
-        if (diff > 0.0f) rawFlux += diff;
+        if (diff > 0.0f) metrics.spectralFlux += diff;
         previousMagnitudes[i] = magnitude;
     }
 
-    InstantBands instant = {0, 0, 0, 0, 0, 0, 0, 0};
-    float avgEnergies[6];
-    
-    for (int i = 0; i < 6; i++) {
-        avgEnergies[i] = binCounts[i] > 0 ? (energies[i] / binCounts[i]) : 0.0f;
-        if (avgEnergies[i] > maxBandEnergies[i]) {
-            maxBandEnergies[i] = avgEnergies[i]; // No decadimento locale
+    int zeroCrossings = 0;
+    float peakAbsolute = 0.0f;
+    for (size_t i = 1; i < numFrames; ++i) {
+        if ((buffer[i] >= 0 && buffer[i - 1] < 0) || (buffer[i] < 0 && buffer[i - 1] >= 0)) zeroCrossings++;
+        if (std::abs(buffer[i]) > peakAbsolute) peakAbsolute = std::abs(buffer[i]);
+    }
+    metrics.zcr = static_cast<float>(zeroCrossings) / numFrames; 
+
+    // IL CREST FACTOR in una traccia EDM va da 1.0 (Sinusoide Pura) a circa 15.0 (Transiente secco)
+    float rawCrest = (metrics.rms > 0.001f) ? (peakAbsolute / metrics.rms) : 1.0f;
+    metrics.crestFactor = std::clamp((rawCrest - 1.0f) / 10.0f, 0.0f, 1.0f);
+
+    float totalMagnitude = 0.0f;
+    float weightedSum = 0.0f;
+    for (size_t i = 0; i < fftSize / 2; ++i) {
+        totalMagnitude += fftMagnitudes[i];
+        weightedSum += i * fftMagnitudes[i];
+    }
+
+    // UNICO BLOCCO PER LE FEATURE SPETTRALI (Soglia abbassata e Valori Raw per lo Z-Score)
+    if (totalMagnitude > 1e-6f) {
+        // 1. CENTROIDE (Valore raw in Hz)
+        float centroidBin = weightedSum / totalMagnitude;
+        metrics.spectralCentroid = centroidBin * binResolution;
+
+        // 2. SPREAD (Valore raw in Hz)
+        float spreadSum = 0.0f;
+        for (size_t i = 0; i < fftSize / 2; ++i) {
+            float diff = (float)i - centroidBin;
+            spreadSum += (diff * diff) * fftMagnitudes[i];
         }
+        metrics.spectralSpread = std::sqrt(spreadSum / totalMagnitude) * binResolution;
+
+        // 3. ROLLOFF (Valore raw in Hz)
+        float rolloffThreshold = totalMagnitude * 0.85f;
+        float cumulativeMagnitude = 0.0f;
+        for (size_t i = 0; i < fftSize / 2; ++i) {
+            cumulativeMagnitude += fftMagnitudes[i];
+            if (cumulativeMagnitude >= rolloffThreshold) {
+                metrics.spectralRolloff = i * binResolution;
+                break;
+            }
+        }
+    } else {
+        metrics.spectralCentroid = 0.0f;
+        metrics.spectralSpread = 0.0f;
+        metrics.spectralRolloff = 0.0f;
     }
 
-    instant.subBass = avgEnergies[0] / maxBandEnergies[0];
-    instant.bass    = avgEnergies[1] / maxBandEnergies[1];
-    instant.lowMid  = avgEnergies[2] / maxBandEnergies[2];
-    instant.mid     = avgEnergies[3] / maxBandEnergies[3];
-    instant.highMid = avgEnergies[4] / maxBandEnergies[4];
-    instant.high    = avgEnergies[5] / maxBandEnergies[5];
-    instant.rms     = rms;
-    instant.rawFlux = rawFlux; 
-
-    bandHistory.push_back(instant);
-    if (bandHistory.size() > 1000) bandHistory.pop_front();
-
-    // ---------------------------------------------------------
-    // AGGREGAZIONE (Finestra veloce)
-    // ---------------------------------------------------------
-    float activeBpm = (detectedBpm > 30.0f) ? detectedBpm : 120.0f; 
-    float beatDurationSec = 60.0f / activeBpm;
-    float bufferDurationSec = static_cast<float>(numFrames) / sampleRate;
-    
-    int framesInWindow = static_cast<int>((beatDurationSec * 4.0f) / bufferDurationSec);
-    framesInWindow = std::clamp(framesInWindow, 2, static_cast<int>(bandHistory.size()));
-
-    InstantBands aggregated = {0, 0, 0, 0, 0, 0, 0, 0};
-    float sumWeights = 0.0f;
-
-    auto it = bandHistory.rbegin();
-    for (int i = 0; i < framesInWindow; ++i, ++it) {
-        float weight = 1.0f - (static_cast<float>(i) / framesInWindow);
-        sumWeights += weight;
-        aggregated.subBass  += it->subBass * weight;
-        aggregated.bass     += it->bass * weight;
-        aggregated.lowMid   += it->lowMid * weight;
-        aggregated.mid      += it->mid * weight;
-        aggregated.highMid  += it->highMid * weight;
-        aggregated.high     += it->high * weight;
-        aggregated.rms      += it->rms * weight;
-        aggregated.rawFlux  += it->rawFlux * weight; 
-    }
-
-    if (sumWeights > 0.0f) {
-        aggregated.subBass  /= sumWeights;
-        aggregated.bass     /= sumWeights;
-        aggregated.lowMid   /= sumWeights;
-        aggregated.mid      /= sumWeights;
-        aggregated.highMid  /= sumWeights;
-        aggregated.high     /= sumWeights;
-        aggregated.rms      /= sumWeights;
-        aggregated.rawFlux  /= sumWeights; 
-    }
-
-    // --- AUTO-SCALING GLOBALE SUI PICCHI ASSOLUTI (No decadimento) ---
-    
-    if (aggregated.rms > globalMaxRms) globalMaxRms = aggregated.rms;
-    float normRms = std::clamp(aggregated.rms / globalMaxRms, 0.0f, 1.0f);
-
-    if (aggregated.subBass > globalMaxSubBass) globalMaxSubBass = aggregated.subBass;
-    float normSubBass = std::clamp(aggregated.subBass / globalMaxSubBass, 0.0f, 1.0f);
-
-    if (aggregated.bass > globalMaxBass) globalMaxBass = aggregated.bass;
-    float normBass = std::clamp(aggregated.bass / globalMaxBass, 0.0f, 1.0f);
-
-    if (aggregated.highMid > globalMaxHighMid) globalMaxHighMid = aggregated.highMid;
-    float normHighMid = std::clamp(aggregated.highMid / globalMaxHighMid, 0.0f, 1.0f);
-
-    if (aggregated.rawFlux > globalMaxFlux) globalMaxFlux = aggregated.rawFlux;
-    float normFlux = std::clamp(aggregated.rawFlux / globalMaxFlux, 0.0f, 1.0f);
-
-    if (metricsMutex.try_lock()) {
-        // Salvataggio dei meter L/R e del picco assoluto
-        currentMetrics.peakL = peakL;
-        currentMetrics.peakR = peakR;
-        currentMetrics.peak = std::max(peakL, peakR); // Compatibilità
+    // COMPRESSIONE BANDE FFT (Square Root + Gain)
+    auto calcBandEnergy = [&](float freqStart, float freqEnd) -> float {
+        int startBin = std::max(0, static_cast<int>(freqStart / binResolution));
+        int endBin = std::min(static_cast<int>(fftSize / 2), static_cast<int>(freqEnd / binResolution));
+        float energy = 0.0f;
+        for (int i = startBin; i < endBin; ++i) energy += fftMagnitudes[i];
         
-        currentMetrics.bpm = detectedBpm;          
-        if (isBeatNow) currentMetrics.isBeat = true; 
-        
-        currentMetrics.rms = normRms;
-        currentMetrics.bandSubBass = normSubBass;
-        currentMetrics.bandBass = normBass;
-        currentMetrics.bandHighMid = normHighMid;
-        currentMetrics.spectralFlux = normFlux;
-        
-        currentMetrics.bandLowMid = aggregated.lowMid;
-        currentMetrics.bandMid = aggregated.mid;
-        currentMetrics.bandHigh = aggregated.high;
-        
-        metricsMutex.unlock();
-    }
+        float avgEnergy = energy / std::max(1, endBin - startBin); 
+        return std::clamp(std::sqrt(avgEnergy) * 5.0f, 0.0f, 1.0f); 
+    };
+
+    metrics.bandSubBass    = calcBandEnergy(20.0f, 60.0f);
+    metrics.bandBass       = calcBandEnergy(60.0f, 250.0f);
+    metrics.bandLowMid     = calcBandEnergy(250.0f, 500.0f);
+    metrics.bandMid        = calcBandEnergy(500.0f, 2000.0f);
+    metrics.bandHighMid    = calcBandEnergy(2000.0f, 4000.0f);
+    metrics.bandPresence   = calcBandEnergy(4000.0f, 6000.0f);
+    metrics.bandBrilliance = calcBandEnergy(6000.0f, 20000.0f);
+
+    std::lock_guard<std::mutex> lock(metricsMutex);
+    currentMetrics = metrics;
 }
 
 // =======================================================
