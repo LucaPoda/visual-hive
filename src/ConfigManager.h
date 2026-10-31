@@ -30,6 +30,20 @@ struct AppConfig {
     int knnKNeighbors;
     int uiWindowWidth;
     int uiWindowHeight;
+
+    // Calibrazione BPM (Retta di regressione e punti)
+    struct BpmCalibrationPoint {
+        float raw = 0.0f;
+        float actual = 0.0f;
+    };
+
+    struct BpmCalibrationConfig {
+        float slope = 1.0f;
+        float intercept = 0.0f;
+        std::vector<BpmCalibrationPoint> points;
+    };
+
+    BpmCalibrationConfig bpmCalibration;
 };
 
 class ConfigManager {
@@ -42,9 +56,12 @@ public:
     
     // Getter for the loaded configuration
     const AppConfig& getConfig() const;
+    AppConfig& getMutableConfig() { return config; }
+    const std::string& getConfigFilePath() const { return configFilePath; }
     
     // Metodo per salvare la configurazione
     bool saveConfig() const;
+    bool saveBpmCalibration(float slope, float intercept, const std::vector<AppConfig::BpmCalibrationPoint>& points);
     
 private:
     void loadAssetsConfig(const std::string& assetsConfigFilePath);

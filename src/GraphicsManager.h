@@ -77,7 +77,7 @@ public:
     
     void beginDashboard();
     
-    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr);    
+    void endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr, ConfigManager* configMgr = nullptr);    
     
     void showLive(const cv::Mat& frame, bool isBlackout);
     

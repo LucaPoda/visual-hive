@@ -1,0 +1,319 @@
+{
+    "backgrounds": {
+        "loop_01_1.mp4": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                254,
+                201,
+                8
+            ],
+            "is_enabled_global": true,
+            "key": "1",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 0
+        },
+        "loop_02_2.mov": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                250,
+                245
+            ],
+            "is_enabled_global": true,
+            "key": "2",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 0
+        },
+        "loop_03_3.mp4": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "3",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 0
+        },
+        "loop_04_4.mp4": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "4",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 0
+        },
+        "loop_09_5.mov": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "5",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "loop_10_t.mov": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                225,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "t",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "loop_11_6.mp4": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "6",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "loop_12_y.mp4": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                230,
+                230,
+                235
+            ],
+            "is_enabled_global": true,
+            "key": "y",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "loop_13_7.mp4": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "7",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "loop_14_u.mov": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "u",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "loop_15_8.mov": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                235,
+                245,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "8",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 0
+        },
+        "loop_16_i.mov": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                240,
+                248,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "i",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 0
+        },
+        "loop_17_9.mov": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                240,
+                250
+            ],
+            "is_enabled_global": true,
+            "key": "9",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 0
+        },
+        "loop_18_o.mp4": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "o",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 0
+        },
+        "loop_19_0.mov": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "0",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 0
+        },
+        "loop_20_p.mp4": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "p",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 0
+        }
+    },
+    "default": {
+        "background": "loop_01_1.mp4",
+        "foreground": "ph-color.png"
+    },
+    "foregrounds": {
+        "empty.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": false,
+            "is_enabled_global": true,
+            "key": "g",
+            "primary_color": "",
+            "scale": 60.0,
+            "secondary_color": ""
+        },
+        "ph-color.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": true,
+            "is_enabled_global": true,
+            "key": "s",
+            "primary_color": "",
+            "scale": 50.0,
+            "secondary_color": ""
+        },
+        "ph-white.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": true,
+            "is_enabled_global": true,
+            "key": "a",
+            "primary_color": "",
+            "scale": 50.0,
+            "secondary_color": ""
+        },
+        "poda.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": false,
+            "is_enabled_global": true,
+            "key": "d",
+            "primary_color": "",
+            "scale": 60.0,
+            "secondary_color": ""
+        },
+        "resx.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": false,
+            "is_enabled_global": true,
+            "key": "f",
+            "primary_color": "",
+            "scale": 60.0,
+            "secondary_color": ""
+        }
+    },
+    "window_captures": {
+        "karaoke_browser": {
+            "app_name": "Google Chrome",
+            "event_phase": "ambient",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "c",
+            "primary_color": "",
+            "secondary_color": "",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 0,
+            "window_name": "YouTube"
+        }
+    }
+}

@@ -1,13 +1,18 @@
 // ConfigManager.cpp
 #include "ConfigManager.h"
 #include <iostream>
+#include <filesystem>
 
 using json = nlohmann::json;
 
 ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath(configFilePath) {
-    std::ifstream configFile(configFilePath);
+    if (!std::filesystem::exists(this->configFilePath) && std::filesystem::exists("build/" + configFilePath)) {
+        this->configFilePath = "build/" + configFilePath;
+    }
+
+    std::ifstream configFile(this->configFilePath);
     if (!configFile.is_open()) {
-        std::cerr << "Error: Could not open config file at " << configFilePath << std::endl;
+        std::cerr << "Error: Could not open config file at " << this->configFilePath << std::endl;
         config.assetsDir = "assets";
         config.keyMappingFile = "config/key_mapping.csv";
         config.assetsConfigFile = "config/assets_config.json";
@@ -17,14 +22,17 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
         
         config.audioSampleRate = 44100;
         config.audioBufferFrames = 512;
-        config.debounceVerse = 12; // Tuning ottimizzato
-        config.debounceBuild = 6;
+        config.debounceVerse = 4; // Tuning ottimizzato e reattivo
+        config.debounceBuild = 3;
         config.debounceChorus = 2;
         config.knnHistorySize = 30;
         config.strobeDurationMs = 50;
         config.knnKNeighbors = 21;
         config.uiWindowWidth = 1920;
         config.uiWindowHeight = 1080;
+        
+        config.bpmCalibration.slope = 1.0f;
+        config.bpmCalibration.intercept = 0.0f;
         return;
     }
 
@@ -55,8 +63,8 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
     if (data.count("advanced")) {
         config.audioSampleRate = data["advanced"].value("audioSampleRate", 44100);
         config.audioBufferFrames = data["advanced"].value("audioBufferFrames", 512);
-        config.debounceVerse = data["advanced"].value("debounceVerse", 12);
-        config.debounceBuild = data["advanced"].value("debounceBuild", 6);
+        config.debounceVerse = data["advanced"].value("debounceVerse", 4);
+        config.debounceBuild = data["advanced"].value("debounceBuild", 3);
         config.debounceChorus = data["advanced"].value("debounceChorus", 2);
         config.knnHistorySize = data["advanced"].value("knnHistorySize", 30);
         config.strobeDurationMs = data["advanced"].value("strobeDurationMs", 50);
@@ -64,12 +72,28 @@ ConfigManager::ConfigManager(const std::string& configFilePath) : configFilePath
     } else {
         config.audioSampleRate = data.value("audioSampleRate", 44100);
         config.audioBufferFrames = data.value("audioBufferFrames", 512);
-        config.debounceVerse = data.value("debounceVerse", 12);
-        config.debounceBuild = data.value("debounceBuild", 6);
+        config.debounceVerse = data.value("debounceVerse", 4);
+        config.debounceBuild = data.value("debounceBuild", 3);
         config.debounceChorus = data.value("debounceChorus", 2);
         config.knnHistorySize = data.value("knnHistorySize", 30);
         config.strobeDurationMs = data.value("strobeDurationMs", 50);
         config.knnKNeighbors = data.value("knnKNeighbors", 21);
+    }
+
+    if (data.count("bpm_calibration")) {
+        config.bpmCalibration.slope = data["bpm_calibration"].value("slope", 1.0f);
+        config.bpmCalibration.intercept = data["bpm_calibration"].value("intercept", 0.0f);
+        if (data["bpm_calibration"].count("points") && data["bpm_calibration"]["points"].is_array()) {
+            config.bpmCalibration.points.clear();
+            for (const auto& p : data["bpm_calibration"]["points"]) {
+                AppConfig::BpmCalibrationPoint pt;
+                pt.raw = p.value("raw", 0.0f);
+                pt.actual = p.value("actual", 0.0f);
+                if (pt.raw > 0.0f && pt.actual > 0.0f) {
+                    config.bpmCalibration.points.push_back(pt);
+                }
+            }
+        }
     }
 
     loadAssetsConfig(config.assetsConfigFile);
@@ -138,9 +162,26 @@ bool ConfigManager::saveConfig() const {
     data["advanced"]["strobeDurationMs"] = config.strobeDurationMs;
     data["advanced"]["knnKNeighbors"] = config.knnKNeighbors;
 
+    data["bpm_calibration"]["slope"] = config.bpmCalibration.slope;
+    data["bpm_calibration"]["intercept"] = config.bpmCalibration.intercept;
+    data["bpm_calibration"]["points"] = json::array();
+    for (const auto& pt : config.bpmCalibration.points) {
+        data["bpm_calibration"]["points"].push_back({
+            {"raw", pt.raw},
+            {"actual", pt.actual}
+        });
+    }
+
     std::ofstream configFileOut(configFilePath);
     if (!configFileOut.is_open()) return false;
     
     configFileOut << data.dump(4);
     return true;
+}
+
+bool ConfigManager::saveBpmCalibration(float slope, float intercept, const std::vector<AppConfig::BpmCalibrationPoint>& points) {
+    config.bpmCalibration.slope = slope;
+    config.bpmCalibration.intercept = intercept;
+    config.bpmCalibration.points = points;
+    return saveConfig();
 }

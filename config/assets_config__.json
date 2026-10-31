@@ -1,0 +1,55 @@
+{
+    "backgrounds": {
+        "loop_01_1.mp4": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "loop_01_1.mp4",
+            "primary_color": "Nero",
+            "secondary_color": "Giallo",
+            "song_dynamic": "manual",
+            "thumbnail_frame_index": 250
+        },
+        "loop_02_2.mov": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "loop_02_2.mov",
+            "primary_color": "Giallo",
+            "secondary_color": "Nero",
+            "song_dynamic": "manual",
+            "thumbnail_frame_index": 60
+        },
+        "loop_15_8.mov": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "is_enabled_global": true,
+            "key": "loop_15_8.mov",
+            "primary_color": "Nero",
+            "secondary_color": "Viola",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 190
+        }
+    },
+    "default": {
+        "background": "#000000",
+        "foreground": ""
+    },
+    "foregrounds": {},
+    "window_captures": null
+}

@@ -22,9 +22,9 @@ RuntimeState::RuntimeState(AssetManager& assetManager, const AppConfig* config)
       showReasoningWindow(false)
 {
     if (config) {
-        debounceVerse = config->debounceVerse > 0 ? config->debounceVerse : 16;
-        debounceBuild = config->debounceBuild > 0 ? config->debounceBuild : 12;
-        debounceChorus = config->debounceChorus > 0 ? config->debounceChorus : 8;
+        debounceVerse = config->debounceVerse > 0 ? config->debounceVerse : 4;
+        debounceBuild = config->debounceBuild > 0 ? config->debounceBuild : 3;
+        debounceChorus = config->debounceChorus > 0 ? config->debounceChorus : 2;
     }
     currentPenaltyBeats = debounceBuild;
 
@@ -55,17 +55,17 @@ RuntimeState::RuntimeState(AssetManager& assetManager, const AppConfig* config)
     lastFrameTime = cv::getTickCount();
 
     // --- ATTIVAZIONE DI TUTTE LE PALETTE DI DEFAULT ---
-    
-    // 1. Aggiungiamo tutti i colori base (Color Mode 0)
-    const char* baseColors[] = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow"};
-    for (int i = 0; i < 7; ++i) {
-        activePalettes.push_back(baseColors[i]);
-    }
+    // 1. Inizializziamo tutti i colori base (Color Mode 0)
+    activeColors = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
 
-    // 2. Aggiungiamo dinamicamente tutte le palette combinate lette dagli asset (Palette Mode 1)
+    // 2. Inizializziamo tutte le palette combinate lette dagli asset (Palette Mode 1, inclusa "Nessuna Palette")
+    activePalettes.clear();
+    activePalettes.push_back("Nessuna Palette");
     for (const auto& [key, bg] : assetManager.getAssets().get_backgrounds()) {
-        if (!bg.get_primary_color().empty()) {
-            std::string palKey = bg.get_primary_color() + (bg.get_secondary_color().empty() ? "" : "-" + bg.get_secondary_color());
+        std::string prim = ColorUtils::normalizeColorName(bg.get_primary_color());
+        std::string sec = ColorUtils::normalizeColorName(bg.get_secondary_color());
+        if (!prim.empty()) {
+            std::string palKey = prim + (sec.empty() ? "" : "-" + sec);
             if (std::find(activePalettes.begin(), activePalettes.end(), palKey) == activePalettes.end()) {
                 activePalettes.push_back(palKey);
             }
@@ -171,6 +171,33 @@ void RuntimeState::switchCueForeground(const Foreground& newFg) {
     cueForeground->open();
 }
 
+bool RuntimeState::isBackgroundAllowedByPalette(const Background& bg) const {
+    std::string prim = ColorUtils::normalizeColorName(bg.get_primary_color());
+    std::string sec = ColorUtils::normalizeColorName(bg.get_secondary_color());
+    bool hasColor = (!prim.empty() || !sec.empty());
+
+    if (colorMode == 0) {
+        // --- COLOR MODE ---
+        if (activeColors.empty()) return true;
+
+        if (!hasColor) {
+            // Se tutti o quasi tutti i colori sono attivi (default), ammetti i video neutri senza palette
+            return activeColors.size() >= 7;
+        }
+
+        // Il visual è ammesso se almeno uno dei suoi colori dominanti (primario o secondario) rientra tra quelli selezionati
+        bool primMatch = !prim.empty() && std::find(activeColors.begin(), activeColors.end(), prim) != activeColors.end();
+        bool secMatch = !sec.empty() && std::find(activeColors.begin(), activeColors.end(), sec) != activeColors.end();
+        return primMatch || secMatch;
+    } else {
+        // --- PALETTE MODE ---
+        if (activePalettes.empty()) return true;
+
+        std::string palKey = (!hasColor) ? "Nessuna Palette" : (prim + (sec.empty() ? "" : "-" + sec));
+        return std::find(activePalettes.begin(), activePalettes.end(), palKey) != activePalettes.end();
+    }
+}
+
 void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
     std::vector<Background> candidates;
 
@@ -181,26 +208,15 @@ void RuntimeState::triggerAutoSwitch(const AssetsConfig& assets) {
         if (!useAnyEventPhase && bg.get_event_phase() != currentEventPhase) continue;
         if (bg.get_song_dynamic() != currentSongDynamicTarget) continue;
         
-        if (!activePalettes.empty()) {
-            bool valid = false;
-            if (colorMode == 0) { 
-                bool primOk = bg.get_primary_color().empty() || std::find(activePalettes.begin(), activePalettes.end(), bg.get_primary_color()) != activePalettes.end();
-                bool secOk = bg.get_secondary_color().empty() || std::find(activePalettes.begin(), activePalettes.end(), bg.get_secondary_color()) != activePalettes.end();
-                
-                if (bg.get_primary_color().empty() && bg.get_secondary_color().empty()) valid = false;
-                else valid = (primOk && secOk);
-            } else { 
-                std::string palKey = bg.get_primary_color() + (bg.get_secondary_color().empty() ? "" : "-" + bg.get_secondary_color());
-                valid = std::find(activePalettes.begin(), activePalettes.end(), palKey) != activePalettes.end();
-            }
-            
-            if (!valid) continue;
-        }
+        if (!isBackgroundAllowedByPalette(bg)) continue;
 
         candidates.push_back(bg);
     }
 
-    if (candidates.empty()) return;
+    if (candidates.empty()) {
+        LOG_WARN("AutoMode", "Nessun background trovato per il target dinamico e palette selezionate.");
+        return;
+    }
     
     static std::random_device rd;
     static std::mt19937 gen(rd());
@@ -367,10 +383,14 @@ void RuntimeState::updateAiStateMachine(const AudioMetrics& incomingMetrics, con
     beatsSinceTargetChange += beatDelta;
 
     // 8. Filtro Asimmetrico Modulato Reattivo
-    // Attacco rapido e rilascio controllato per cogliere all'istante i cambi musicali (1-2 battute)
-    // senza cadere in buchi momentanei o rimbalzi caotici
-    float base_attack[3]  = {0.35f, 0.45f, 0.65f}; 
-    float base_release[3] = {0.12f, 0.12f, 0.12f}; 
+    // Attack rapido per tutti i target (0.55 per Verse/Low, 0.50 per Build/Mid, 0.60 per Chorus/High)
+    // Release bilanciato (0.28, 0.28, 0.38): se l'energia crolla, CHORUS rilascia subito a 0.38 (o 0.55 se il drop e' finito)
+    float base_attack[3]  = {0.55f, 0.50f, 0.60f}; 
+    float base_release[3] = {0.28f, 0.28f, 0.38f}; 
+    if (currentSongDynamicTarget == CHORUS && targetProbabilities[2] < 0.25f) {
+        base_release[2] = 0.55f; // Rilascio rapido quando il drop si conclude
+    }
+
     for(int i = 0; i < 3; i++) {
         float effectiveConf = std::clamp(currentConfidence, 0.40f, 1.0f);
         float alpha = (targetProbabilities[i] > smoothedScores[i]) 
@@ -379,15 +399,28 @@ void RuntimeState::updateAiStateMachine(const AudioMetrics& incomingMetrics, con
         smoothedScores[i] += alpha * (targetProbabilities[i] - smoothedScores[i]);
     }
 
-    // 9. Bypass Intelligente su Drop ad alta energia (da Build a Chorus)
+    // 9. Reattivita' Immediata sui Nuovi Eventi Musicali (Drop, Breakdown, Build)
     bool forceImmediateChange = false;
-    if (currentSongDynamicTarget == BUILD && targetProbabilities[2] >= 0.70f && currentConfidence > 0.55f) {
+    // A) Drop esplosivo (BUILD -> CHORUS)
+    if (currentSongDynamicTarget == BUILD && targetProbabilities[2] >= 0.65f && currentConfidence > 0.45f) {
         smoothedScores[2] = 0.95f; 
+        forceImmediateChange = true;
+    }
+    // B) Breakdown / Strofa immediata (da CHORUS o BUILD a VERSE quando crolla l'RMS e salgono pad/vocal)
+    else if ((currentSongDynamicTarget == CHORUS || currentSongDynamicTarget == BUILD) && 
+             targetProbabilities[0] >= 0.58f && emaFeatures[0] < 0.48f) {
+        smoothedScores[0] = 0.90f;
+        smoothedScores[2] = std::min(smoothedScores[2], 0.30f); // Abbassa subito Chorus per favorire Verse
+        forceImmediateChange = true;
+    }
+    // C) Inizio Build-up (da VERSE a BUILD)
+    else if (currentSongDynamicTarget == VERSE && targetProbabilities[1] >= 0.58f && currentConfidence > 0.45f) {
+        smoothedScores[1] = 0.90f;
         forceImmediateChange = true;
     }
 
     // 10. OUTPUT CON DEBOUNCING E GUARDIA ANTI-OSCILLAZIONE (ANTI PING-PONG)
-    float min_activation_threshold = 0.50f; 
+    float min_activation_threshold = 0.45f; 
     int bestIdx = 0;
     float maxScore = smoothedScores[0];
     if (smoothedScores[1] > maxScore) { bestIdx = 1; maxScore = smoothedScores[1]; }
@@ -396,24 +429,19 @@ void RuntimeState::updateAiStateMachine(const AudioMetrics& incomingMetrics, con
     SongDynamic candidate = currentSongDynamicTarget;
     SongDynamic newWinner = (bestIdx == 0) ? VERSE : (bestIdx == 1) ? BUILD : CHORUS;
 
-    // Protezione anti-saltellamento: se il contendente coincide con il target abbandonato da meno di 8 beat,
+    // Protezione anti-saltellamento: se il contendente coincide con il target abbandonato da meno di 6 beat,
     // richiediamo una soglia piu' alta per evitare rimbalzi
-    bool isRecentBounce = (newWinner == previousDynamicTarget && beatsSinceTargetChange < 8.0f);
-    float effectiveActivationThreshold = isRecentBounce ? 0.70f : min_activation_threshold;
+    bool isRecentBounce = (newWinner == previousDynamicTarget && beatsSinceTargetChange < 6.0f);
+    float effectiveActivationThreshold = isRecentBounce ? 0.65f : min_activation_threshold;
 
     // Determina i beat di conferma richiesti per la transizione verso newWinner
     int requiredBeats = debounceBuild;
     if (newWinner == VERSE) {
-        requiredBeats = debounceVerse;
+        requiredBeats = forceImmediateChange ? 1 : debounceVerse;
     } else if (newWinner == BUILD) {
-        requiredBeats = debounceBuild;
+        requiredBeats = forceImmediateChange ? 1 : debounceBuild;
     } else if (newWinner == CHORUS) {
-        // Se veniamo da un build e c'e' una vera esplosione energetica, switch rapido (2 beat)
-        if (currentSongDynamicTarget == BUILD && (targetProbabilities[2] >= 0.70f || forceImmediateChange)) {
-            requiredBeats = 2;
-        } else {
-            requiredBeats = debounceChorus;
-        }
+        requiredBeats = (forceImmediateChange || (currentSongDynamicTarget == BUILD && targetProbabilities[2] >= 0.65f)) ? 1 : debounceChorus;
     }
     currentPenaltyBeats = requiredBeats;
 
@@ -422,7 +450,8 @@ void RuntimeState::updateAiStateMachine(const AudioMetrics& incomingMetrics, con
     } else {
         if (maxScore >= effectiveActivationThreshold) {
             if (newWinner != lastWinner) {
-                fractionalWaitCounter = 0.0f; // Nuovo contendente: parte da zero
+                // Invece di azzerare a freddo l'attesa su un singolo spike di rumore, decadiamo progressivamente
+                fractionalWaitCounter = std::max(0.0f, fractionalWaitCounter - beatDelta * 1.5f);
             }
             fractionalWaitCounter += beatDelta;
 

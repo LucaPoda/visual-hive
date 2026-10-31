@@ -14,6 +14,7 @@
 #include <opencv2/opencv.hpp>
 #include <nlohmann/json.hpp>
 #include "ConfigManager.h"
+#include "ColorUtils.h"
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -101,10 +102,10 @@ class Background {
     void set_song_dynamic(const SongDynamic& dynamic) { this->songDynamic = dynamic; }
 
     const std::string& get_primary_color() const { return primaryColor; }
-    void set_primary_color(const std::string& color) { this->primaryColor = color; }
+    void set_primary_color(const std::string& color) { this->primaryColor = ColorUtils::normalizeColorName(color); }
 
     const std::string& get_secondary_color() const { return secondaryColor; }
-    void set_secondary_color(const std::string& color) { this->secondaryColor = color; }
+    void set_secondary_color(const std::string& color) { this->secondaryColor = ColorUtils::normalizeColorName(color); }
 
     int get_thumbnail_frame_index() const { return thumbnailFrameIndex; }
     void set_thumbnail_frame_index(int index) { this->thumbnailFrameIndex = index; }
@@ -177,10 +178,10 @@ class Foreground {
     void set_force_original_colors(bool value) { this->forceOriginalColors = value; }
 
     const std::string& get_primary_color() const { return primaryColor; }
-    void set_primary_color(const std::string& color) { this->primaryColor = color; }
+    void set_primary_color(const std::string& color) { this->primaryColor = ColorUtils::normalizeColorName(color); }
 
     const std::string& get_secondary_color() const { return secondaryColor; }
-    void set_secondary_color(const std::string& color) { this->secondaryColor = color; }
+    void set_secondary_color(const std::string& color) { this->secondaryColor = ColorUtils::normalizeColorName(color); }
 
     const std::string& get_custom_text() const { return customText; }
     void set_custom_text(const std::string& text) { this->customText = text; }

@@ -11,6 +11,7 @@
 #include <deque> // Aggiunto per Z-Score Normalizer
 #include "AssetManager.h"
 #include "KNNClassifier.h" 
+#include "ColorUtils.h"
 
 struct RuntimeState {
     bool isBounceActive;
@@ -24,7 +25,9 @@ struct RuntimeState {
     EventPhase currentEventPhase = AMBIENT;
     bool useAnyEventPhase = false; 
     int colorMode = 0; 
+    std::vector<std::string> activeColors;
     std::vector<std::string> activePalettes;
+    bool isBackgroundAllowedByPalette(const Background& bg) const;
 
     std::chrono::microseconds animationStartTime;
     long long lastFrameTime;
@@ -87,10 +90,10 @@ struct RuntimeState {
     float fractionalWaitCounter = 0.0f;    // Tempo trascorso in attesa del cambio
 
     // Parametri Debounce Configurabili (da AppConfig)
-    int debounceVerse = 10;
-    int debounceBuild = 8;
-    int debounceChorus = 6;
-    float minHoldBeats = 12.0f; // Almeno 12 beat prima di cambiare visual in auto (tranne drop)
+    int debounceVerse = 4;
+    int debounceBuild = 3;
+    int debounceChorus = 2;
+    float minHoldBeats = 6.0f; // Tempo minimo di stabilita' prima di cambiare visual in auto (tranne drop e breakdown immediati)
 
     // Memoria anti-oscillazione
     SongDynamic previousDynamicTarget = BUILD;

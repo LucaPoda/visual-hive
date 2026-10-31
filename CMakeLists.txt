@@ -129,7 +129,7 @@ endif()
 
 # --- Audio DSP ---
 add_library(AudioAnalyzer STATIC src/AudioAnalyzer.cpp src/AudioAnalyzer.h)
-target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack Logger)
+target_link_libraries(AudioAnalyzer PRIVATE rtaudio BTrack Logger nlohmann_json::nlohmann_json)
 target_include_directories(AudioAnalyzer PUBLIC 
     ${rtaudio_SOURCE_DIR} 
     ${btrack_SOURCE_DIR}/src

@@ -29,8 +29,8 @@ void from_json(const nlohmann::json& j, Background& b) {
     if(j.contains("key")) j.at("key").get_to(b.key);
     b.eventPhase = j.value("event_phase", AMBIENT); 
     b.songDynamic = j.value("song_dynamic", VERSE);
-    b.primaryColor = j.value("primary_color", "");
-    b.secondaryColor = j.value("secondary_color", "");
+    b.primaryColor = ColorUtils::normalizeColorName(j.value("primary_color", ""));
+    b.secondaryColor = ColorUtils::normalizeColorName(j.value("secondary_color", ""));
     b.thumbnailFrameIndex = j.value("thumbnail_frame_index", 0);
     b.forceNoForeground = j.value("force_no_foreground", false);
     
@@ -71,8 +71,8 @@ void from_json(const nlohmann::json& j, Foreground& f) {
     if(j.contains("scale")) j.at("scale").get_to(f.scale);
     if(j.contains("key")) j.at("key").get_to(f.key);
     if(j.contains("force_original_colors")) j.at("force_original_colors").get_to(f.forceOriginalColors);
-    f.primaryColor = j.value("primary_color", "");
-    f.secondaryColor = j.value("secondary_color", "");
+    f.primaryColor = ColorUtils::normalizeColorName(j.value("primary_color", ""));
+    f.secondaryColor = ColorUtils::normalizeColorName(j.value("secondary_color", ""));
     f.customText = j.value("custom_text", "");
     f.fontSize = j.value("font_size", 32);
 }
@@ -578,7 +578,7 @@ std::pair<std::string, std::string> AssetManager::analyzeFramePalette(const cv::
 
     struct NamedColor { std::string name; };
     std::vector<NamedColor> baseColors = {
-        {"Bianco"}, {"Nero"}, {"Rosso"}, {"Verde"}, {"Blu"}, {"Viola"}, {"Giallo"}, {"Arancione"}
+        {"White"}, {"Black"}, {"Red"}, {"Green"}, {"Blue"}, {"Magenta"}, {"Yellow"}, {"Orange"}
     };
 
     std::map<std::string, int> counts;
@@ -590,16 +590,16 @@ std::pair<std::string, std::string> AssetManager::analyzeFramePalette(const cv::
             int h = pixel[0], s = pixel[1], v = pixel[2];
             
             std::string colorName = "";
-            if (v < 40) colorName = "Nero";
-            else if (s < 40 && v > 200) colorName = "Bianco";
+            if (v < 40) colorName = "Black";
+            else if (s < 40 && v > 200) colorName = "White";
             else {
-                if (h <= 10 || h >= 160) colorName = "Rosso";
-                else if (h >= 11 && h <= 25) colorName = "Arancione";
-                else if (h >= 26 && h <= 35) colorName = "Giallo";
-                else if (h >= 36 && h <= 85) colorName = "Verde";
-                else if (h >= 86 && h <= 130) colorName = "Blu";
-                else if (h >= 131 && h <= 159) colorName = "Viola";
-                else colorName = "Nero"; 
+                if (h <= 10 || h >= 160) colorName = "Red";
+                else if (h >= 11 && h <= 25) colorName = "Orange";
+                else if (h >= 26 && h <= 35) colorName = "Yellow";
+                else if (h >= 36 && h <= 85) colorName = "Green";
+                else if (h >= 86 && h <= 130) colorName = "Blue";
+                else if (h >= 131 && h <= 159) colorName = "Magenta";
+                else colorName = "Black"; 
             }
             if (!colorName.empty()) counts[colorName]++;
         }

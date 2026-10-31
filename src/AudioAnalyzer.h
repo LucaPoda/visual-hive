@@ -19,6 +19,7 @@ struct AudioMetrics {
     float peakL = 0.0f;
     float peakR = 0.0f;
     float bpm = 0.0f;
+    float rawBpm = 0.0f;
     bool isBeat = false;
 
     // Feature Temporali (Volume e Impulsività)
@@ -65,6 +66,24 @@ public:
     std::string getCurrentRecordFilename() const { return currentRecordFile; }
     std::string getRecordingTimeFormatted() const;
 
+    struct BpmPoint {
+        float raw = 0.0f;
+        float actual = 0.0f;
+    };
+
+    // Gestione e Calibrazione BPM con Regressione Lineare (m * raw + q)
+    float getRawBpm() const { return lastRawBpm.load(); }
+    float getBpmSlope() const { return bpmSlope.load(); }
+    float getBpmIntercept() const { return bpmIntercept.load(); }
+    void setCalibrationLine(float slope, float intercept) { bpmSlope.store(slope); bpmIntercept.store(intercept); }
+    
+    std::vector<BpmPoint> getCalibrationPoints();
+    void setCalibrationPoints(const std::vector<BpmPoint>& pts);
+    void addCalibrationPoint(float raw, float actual);
+    void removeCalibrationPoint(size_t index);
+    void clearCalibrationPoints();
+    void computeRegression();
+
 private:
     static int audioCallback(void* outputBuffer, void* inputBuffer, unsigned int nBufferFrames,
                              double streamTime, RtAudioStreamStatus status, void* userData);
@@ -77,6 +96,13 @@ private:
 
     std::unique_ptr<BTrack> btrack;
     std::vector<double> btrackBuffer;
+
+    // Membri Calibrazione BPM Lineare
+    std::atomic<float> bpmSlope{1.0f};
+    std::atomic<float> bpmIntercept{0.0f};
+    std::atomic<float> lastRawBpm{0.0f};
+    std::mutex pointsMutex;
+    std::vector<BpmPoint> calibrationPoints;
 
     unsigned int sampleRate = 44100;
     std::vector<float> previousMagnitudes;

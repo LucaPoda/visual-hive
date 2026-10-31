@@ -1,6 +1,7 @@
 // GraphicsManager.cpp
 #include "GraphicsManager.h"
 #include "Logger.h"
+#include "ColorUtils.h"
 #include <cmath>
 #include <iostream>
 #include <filesystem>
@@ -248,16 +249,17 @@ void GraphicsManager::UpdateGLTexture(const cv::Mat& mat, GLuint& textureID) {
 }
 
 void GraphicsManager::drawPaletteSquare(const std::string& primary, const std::string& secondary, float size) {
-    auto getCol32 = [](const std::string& name) -> ImU32 {
-        if (name == "White" || name == "Bianco") return IM_COL32(255, 255, 255, 255);
-        if (name == "Black" || name == "Nero") return IM_COL32(20, 20, 20, 255);
-        if (name == "Red" || name == "Rosso") return IM_COL32(240, 30, 30, 255);
-        if (name == "Green" || name == "Verde") return IM_COL32(40, 210, 60, 255);
-        if (name == "Blue" || name == "Blu") return IM_COL32(40, 110, 240, 255);
-        if (name == "Cyan" || name == "Ciano") return IM_COL32(0, 230, 230, 255);
-        if (name == "Magenta" || name == "Viola" || name == "Purple") return IM_COL32(180, 40, 210, 255);
-        if (name == "Yellow" || name == "Giallo") return IM_COL32(245, 230, 30, 255);
-        if (name == "Orange" || name == "Arancione") return IM_COL32(255, 140, 20, 255);
+    auto getCol32 = [](const std::string& raw) -> ImU32 {
+        std::string name = ColorUtils::normalizeColorName(raw);
+        if (name == "White") return IM_COL32(255, 255, 255, 255);
+        if (name == "Black") return IM_COL32(20, 20, 20, 255);
+        if (name == "Red") return IM_COL32(240, 30, 30, 255);
+        if (name == "Green") return IM_COL32(40, 210, 60, 255);
+        if (name == "Blue") return IM_COL32(40, 110, 240, 255);
+        if (name == "Cyan") return IM_COL32(0, 230, 230, 255);
+        if (name == "Magenta") return IM_COL32(180, 40, 210, 255);
+        if (name == "Yellow") return IM_COL32(245, 230, 30, 255);
+        if (name == "Orange") return IM_COL32(255, 140, 20, 255);
         return IM_COL32(128, 128, 128, 255);
     };
 
@@ -283,7 +285,7 @@ void GraphicsManager::beginDashboard() {
     ImGui::NewFrame();
 }
 
-void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr) {
+void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueFrame, RuntimeState& state, double bpm, AudioAnalyzer& audioAnalyzer, KNNPrediction pred, AssetManager& assetMgr, ConfigManager* configMgr) {
     glfwMakeContextCurrent(uiWindow);
 
     if (!assetMgr.isReady.load()) {
@@ -534,9 +536,138 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
         #endif
     }
     
-    // Testo BPM a destra (allineato sulla stessa riga della registrazione)
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 70.0f);
-    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%3.0f BPM", audioData.bpm);
+    // Testo BPM a destra (allineato sulla stessa riga della registrazione) con pulsante Calibrazione
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 150.0f);
+    ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.5f, 1.0f), "%5.1f BPM", audioData.bpm);
+    ImGui::SameLine();
+    static bool showBpmCalibration = false;
+    if (ImGui::SmallButton(showBpmCalibration ? "Calibra [-]" : "Calibra [+]")) {
+        showBpmCalibration = !showBpmCalibration;
+    }
+
+    if (showBpmCalibration) {
+        ImGui::Dummy(ImVec2(0.0f, 3.0f));
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.12f, 0.15f, 1.0f));
+        ImGui::BeginChild("BpmCalibrationBox", ImVec2(0, 240), true);
+        
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 1.0f, 1.0f), "CALIBRAZIONE BPM: REGRESSIONE LINEARE (m * Raw + q)");
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 175.0f);
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[Auto-Double < 110: ON]");
+        
+        float raw = audioAnalyzer.getRawBpm();
+        float slope = audioAnalyzer.getBpmSlope();
+        float intercept = audioAnalyzer.getBpmIntercept();
+        
+        ImGui::Text("Formula Attiva: BPM = %.4f * Raw %+.2f", slope, intercept);
+        ImGui::SameLine(ImGui::GetContentRegionAvail().x - 220.0f);
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Raw: %.1f -> Calibrato: %.1f", raw, audioData.bpm);
+        
+        ImGui::Separator();
+        
+        // Tabella dei punti di calibrazione
+        auto pts = audioAnalyzer.getCalibrationPoints();
+        ImGui::BeginChild("PointsTable", ImVec2(0, 105), true);
+        if (pts.empty()) {
+            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Nessun punto inserito. Il sistema usa calibrazione identica (m=1.0, q=0.0).");
+        } else {
+            ImGui::Columns(4, "CalibCols", false);
+            ImGui::SetColumnWidth(0, 70);
+            ImGui::SetColumnWidth(1, 140);
+            ImGui::SetColumnWidth(2, 140);
+            
+            ImGui::Text("#"); ImGui::NextColumn();
+            ImGui::Text("BPM Letto (Raw)"); ImGui::NextColumn();
+            ImGui::Text("BPM Reale (Target)"); ImGui::NextColumn();
+            ImGui::Text("Azione"); ImGui::NextColumn();
+            ImGui::Separator();
+            
+            int toDelete = -1;
+            for (size_t i = 0; i < pts.size(); ++i) {
+                ImGui::PushID(static_cast<int>(i));
+                ImGui::Text("Punto %zu", i + 1); ImGui::NextColumn();
+                ImGui::Text("%.1f BPM", pts[i].raw); ImGui::NextColumn();
+                ImGui::Text("%.1f BPM", pts[i].actual); ImGui::NextColumn();
+                if (ImGui::SmallButton("Elimina")) {
+                    toDelete = static_cast<int>(i);
+                }
+                ImGui::NextColumn();
+                ImGui::PopID();
+            }
+            ImGui::Columns(1);
+            if (toDelete >= 0) {
+                audioAnalyzer.removeCalibrationPoint(toDelete);
+                LOG_INFO("AudioAnalyzer", "Rimosso punto di calibrazione #" + std::to_string(toDelete + 1));
+            }
+        }
+        ImGui::EndChild();
+        
+        // Riga Aggiunta Nuovo Punto
+        static float newRaw = 120.0f;
+        static float newActual = 123.0f;
+        
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::InputFloat("##NewRaw", &newRaw, 0.5f, 1.0f, "%.1f");
+        ImGui::SameLine();
+        if (ImGui::Button("Cattura Raw")) {
+            if (raw > 30.0f) newRaw = raw;
+        }
+        ImGui::SameLine();
+        ImGui::Text("-> Reale:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::InputFloat("##NewActual", &newActual, 0.5f, 1.0f, "%.1f");
+        
+        ImGui::SameLine();
+        if (ImGui::Button("TAP")) {
+            static double lastTapTime = 0.0;
+            static std::vector<double> tapIntervals;
+            double nowTap = ImGui::GetTime();
+            if (lastTapTime > 0.0) {
+                double diff = nowTap - lastTapTime;
+                if (diff >= 0.25 && diff <= 2.0) {
+                    tapIntervals.push_back(diff);
+                    if (tapIntervals.size() > 5) tapIntervals.erase(tapIntervals.begin());
+                    double avgDiff = 0.0;
+                    for (double d : tapIntervals) avgDiff += d;
+                    avgDiff /= tapIntervals.size();
+                    newActual = static_cast<float>(std::round(60.0 / avgDiff));
+                } else {
+                    tapIntervals.clear();
+                }
+            }
+            lastTapTime = nowTap;
+        }
+        
+        ImGui::SameLine();
+        if (ImGui::Button("+ Aggiungi Punto")) {
+            if (newRaw > 30.0f && newActual > 30.0f) {
+                audioAnalyzer.addCalibrationPoint(newRaw, newActual);
+                LOG_INFO("AudioAnalyzer", "Aggiunto punto: Raw=" + std::to_string(newRaw) + " -> Actual=" + std::to_string(newActual));
+            }
+        }
+        
+        ImGui::SameLine();
+        if (ImGui::Button("Reset Punti")) {
+            audioAnalyzer.clearCalibrationPoints();
+            LOG_INFO("AudioAnalyzer", "Azzerati punti di calibrazione BPM.");
+        }
+        
+        if (configMgr != nullptr) {
+            ImGui::SameLine();
+            if (ImGui::Button("Salva in config.json")) {
+                auto currentPts = audioAnalyzer.getCalibrationPoints();
+                std::vector<AppConfig::BpmCalibrationPoint> cfgPts;
+                for (const auto& p : currentPts) {
+                    cfgPts.push_back({p.raw, p.actual});
+                }
+                configMgr->saveBpmCalibration(audioAnalyzer.getBpmSlope(), audioAnalyzer.getBpmIntercept(), cfgPts);
+                LOG_INFO("ConfigManager", "Calibrazione BPM salvata con successo in config.json");
+            }
+        }
+        
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+    }
     
     ImGui::Dummy(ImVec2(0.0f, 10.0f));
     
@@ -559,26 +690,75 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
     ImGui::RadioButton("COLOR MODE", &state.colorMode, 0); ImGui::SameLine();
     ImGui::RadioButton("PALETTE MODE", &state.colorMode, 1);
 
-    ImGui::Text("Colori/Palette Attivi:");
     if (state.colorMode == 0) {
-        const char* colors[] = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow"};        
-        for (int i = 0; i < 7; i++) {
-            bool active = std::find(state.activePalettes.begin(), state.activePalettes.end(), colors[i]) != state.activePalettes.end();
-            if (ImGui::Checkbox(colors[i], &active)) {
-                if (active) state.activePalettes.push_back(colors[i]);
-                else state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), colors[i]), state.activePalettes.end());
+        ImGui::Text("Colori Attivi:");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Tutti##Colors")) {
+            state.activeColors = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Nessuno##Colors")) {
+            state.activeColors.clear();
+        }
+
+        const char* colorKeys[] = {"White", "Red", "Green", "Blue", "Cyan", "Magenta", "Yellow", "Orange", "Black"};
+        const char* colorLabels[] = {"Bianco", "Rosso", "Verde", "Blu", "Ciano", "Magenta", "Giallo", "Arancione", "Nero"};
+        for (int i = 0; i < 9; i++) {
+            bool active = std::find(state.activeColors.begin(), state.activeColors.end(), colorKeys[i]) != state.activeColors.end();
+            if (ImGui::Checkbox(colorLabels[i], &active)) {
+                if (active) state.activeColors.push_back(colorKeys[i]);
+                else state.activeColors.erase(std::remove(state.activeColors.begin(), state.activeColors.end(), colorKeys[i]), state.activeColors.end());
             }
             if ((i + 1) % 4 != 0) ImGui::SameLine();
         }
+        if (9 % 4 != 0) ImGui::NewLine();
     } else {
+        ImGui::Text("Palette Attive:");
+        ImGui::SameLine();
+        
         std::set<std::pair<std::string, std::string>> uniquePalettes;
+        bool hasNoPaletteVisuals = false;
         for (auto& [key, bg] : assetMgr.getMutableAssets().get_backgrounds()) {
-            if (!bg.get_primary_color().empty()) {
-                uniquePalettes.insert({bg.get_primary_color(), bg.get_secondary_color()});
+            std::string prim = ColorUtils::normalizeColorName(bg.get_primary_color());
+            std::string sec = ColorUtils::normalizeColorName(bg.get_secondary_color());
+            if (!prim.empty()) {
+                uniquePalettes.insert({prim, sec});
+            } else {
+                hasNoPaletteVisuals = true;
             }
         }
-        
+
+        if (ImGui::SmallButton("Tutte##Palettes")) {
+            state.activePalettes.clear();
+            if (hasNoPaletteVisuals) state.activePalettes.push_back("Nessuna Palette");
+            for (const auto& pal : uniquePalettes) {
+                state.activePalettes.push_back(pal.first + (pal.second.empty() ? "" : "-" + pal.second));
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Nessuna##Palettes")) {
+            state.activePalettes.clear();
+        }
+
         int count = 0;
+        if (hasNoPaletteVisuals) {
+            std::string noPalKey = "Nessuna Palette";
+            bool isActive = std::find(state.activePalettes.begin(), state.activePalettes.end(), noPalKey) != state.activePalettes.end();
+            ImVec2 p = ImGui::GetCursorScreenPos();
+            drawPaletteSquare("", "", 30.0f);
+            if (isActive) {
+                ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.5f);
+            }
+            ImGui::SetCursorScreenPos(p);
+            if (ImGui::InvisibleButton("##no_pal", ImVec2(30.0f, 30.0f))) {
+                if (isActive) state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), noPalKey), state.activePalettes.end());
+                else state.activePalettes.push_back(noPalKey);
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Nessuna Palette (Visual Neutri)");
+            count++;
+            ImGui::SameLine();
+        }
+
         for (const auto& pal : uniquePalettes) {
             std::string palKey = pal.first + (pal.second.empty() ? "" : "-" + pal.second);
             bool isActive = std::find(state.activePalettes.begin(), state.activePalettes.end(), palKey) != state.activePalettes.end();
@@ -587,7 +767,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
             drawPaletteSquare(pal.first, pal.second, 30.0f);
             
             if (isActive) {
-                ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.0f);
+                ImGui::GetWindowDrawList()->AddRect(p, ImVec2(p.x + 30.0f, p.y + 30.0f), IM_COL32(0, 255, 0, 255), 0.0f, 0, 2.5f);
             }
             
             ImGui::SetCursorScreenPos(p);
@@ -595,6 +775,7 @@ void GraphicsManager::endDashboard(const cv::Mat& liveFrame, const cv::Mat& cueF
                 if (isActive) state.activePalettes.erase(std::remove(state.activePalettes.begin(), state.activePalettes.end(), palKey), state.activePalettes.end());
                 else state.activePalettes.push_back(palKey);
             }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", palKey.c_str());
             
             if ((count + 1) % 6 != 0) ImGui::SameLine();
             count++;

@@ -93,6 +93,14 @@ int main() {
     }
 
     AudioAnalyzer audioAnalyzer;
+    std::vector<AudioAnalyzer::BpmPoint> calibPts;
+    for (const auto& cp : config.bpmCalibration.points) {
+        calibPts.push_back({cp.raw, cp.actual});
+    }
+    audioAnalyzer.setCalibrationPoints(calibPts);
+    if (config.bpmCalibration.slope != 1.0f || config.bpmCalibration.intercept != 0.0f) {
+        audioAnalyzer.setCalibrationLine(config.bpmCalibration.slope, config.bpmCalibration.intercept);
+    }
     audioAnalyzer.start(0, config.audioSampleRate, config.audioBufferFrames);
 
     LOG_INFO("Main", "In attesa warmup audio (1 secondo)...");
@@ -224,11 +232,13 @@ int main() {
                     
                     // Un cambio dinamico avviene se:
                     // 1) Il target e' cambiato E la grafica attuale e' rimasta attiva per almeno minHoldBeats
-                    //    oppure se e' un passaggio drammatico BUILD -> CHORUS (drop)
+                    //    oppure se e' un evento musicale marcato (Drop, Breakdown, Inizio Build)
                     bool isDramaticDrop = (targetChanged && state.currentSongDynamicTarget == CHORUS && prevTarget == BUILD);
+                    bool isDramaticBreakdown = (targetChanged && prevTarget == CHORUS && state.currentSongDynamicTarget == VERSE);
+                    bool isBuildStart = (targetChanged && prevTarget == VERSE && state.currentSongDynamicTarget == BUILD);
 
                     if (targetChanged) {
-                        if (state.beatsSinceLastChange >= state.minHoldBeats || isDramaticDrop) {
+                        if (state.beatsSinceLastChange >= state.minHoldBeats || isDramaticDrop || isDramaticBreakdown || isBuildStart) {
                             state.triggerAutoSwitch(assetManager.getAssets());
                         }
                     } 
@@ -333,7 +343,7 @@ int main() {
             bool isSpacePressed = ImGui::IsKeyDown(ImGuiKey_Space);
             outputFrame = graphics.applyStrobeEffect(outputFrame, state, audioData.bpm, isSpacePressed);
 
-            graphics.endDashboard(outputFrame, previewFrame, state, audioData.bpm, audioAnalyzer, pred, assetManager);            
+            graphics.endDashboard(outputFrame, previewFrame, state, audioData.bpm, audioAnalyzer, pred, assetManager, &configManager);            
             graphics.showLive(outputFrame, state.isBlackout);
         }
 

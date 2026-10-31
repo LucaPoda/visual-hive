@@ -1,5 +1,7 @@
 // AudioAnalyzer.cpp
 #include "AudioAnalyzer.h"
+#include "Logger.h"
+#include <nlohmann/json.hpp>
 #include <cmath>
 #include <numeric>
 #include <algorithm>
@@ -207,7 +209,28 @@ void AudioAnalyzer::processBuffer(const float* buffer, unsigned int numFrames, d
         for (unsigned int i = 0; i < numFrames; i++) btrackBuffer[i] = static_cast<double>(buffer[i]);
         btrack->processAudioFrame(btrackBuffer.data());
         metrics.isBeat = btrack->beatDueInCurrentFrame();
-        metrics.bpm = static_cast<float>(btrack->getCurrentTempoEstimate());
+        
+        float rawTempo = static_cast<float>(btrack->getCurrentTempoEstimate());
+
+        // I BPM sotto i 110 vanno raddoppiati
+        if (rawTempo > 30.0f) {
+            while (rawTempo < 110.0f) {
+                rawTempo *= 2.0f;
+            }
+        }
+        
+        lastRawBpm.store(rawTempo);
+        metrics.rawBpm = rawTempo;
+
+        // Modello lineare: Calibrated = (Slope * Raw) + Intercept
+        float calibrated = 0.0f;
+        if (rawTempo > 30.0f) {
+            calibrated = (rawTempo * bpmSlope.load()) + bpmIntercept.load();
+            while (calibrated > 30.0f && calibrated < 110.0f) {
+                calibrated *= 2.0f;
+            }
+        }
+        metrics.bpm = calibrated;
     }
 
     unsigned int fftSize = 2048; 
@@ -420,4 +443,86 @@ std::string AudioAnalyzer::getRecordingTimeFormatted() const {
     char buf[16];
     snprintf(buf, sizeof(buf), "%02d:%02d", m, s);
     return std::string(buf);
+}
+
+void AudioAnalyzer::computeRegression() {
+    std::lock_guard<std::mutex> lock(pointsMutex);
+    size_t n = calibrationPoints.size();
+    if (n == 0) {
+        bpmSlope.store(1.0f);
+        bpmIntercept.store(0.0f);
+        return;
+    }
+    if (n == 1) {
+        bpmSlope.store(1.0f);
+        bpmIntercept.store(calibrationPoints[0].actual - calibrationPoints[0].raw);
+        return;
+    }
+
+    double sumX = 0.0, sumY = 0.0;
+    for (const auto& pt : calibrationPoints) {
+        sumX += pt.raw;
+        sumY += pt.actual;
+    }
+    double meanX = sumX / n;
+    double meanY = sumY / n;
+
+    double covXY = 0.0;
+    double varX = 0.0;
+    for (const auto& pt : calibrationPoints) {
+        double dx = pt.raw - meanX;
+        double dy = pt.actual - meanY;
+        covXY += dx * dy;
+        varX += dx * dx;
+    }
+
+    if (std::abs(varX) < 1e-6) {
+        bpmSlope.store(1.0f);
+        bpmIntercept.store(static_cast<float>(meanY - meanX));
+    } else {
+        float m = static_cast<float>(covXY / varX);
+        float q = static_cast<float>(meanY - m * meanX);
+        bpmSlope.store(m);
+        bpmIntercept.store(q);
+    }
+}
+
+std::vector<AudioAnalyzer::BpmPoint> AudioAnalyzer::getCalibrationPoints() {
+    std::lock_guard<std::mutex> lock(pointsMutex);
+    return calibrationPoints;
+}
+
+void AudioAnalyzer::setCalibrationPoints(const std::vector<BpmPoint>& pts) {
+    {
+        std::lock_guard<std::mutex> lock(pointsMutex);
+        calibrationPoints = pts;
+    }
+    computeRegression();
+}
+
+void AudioAnalyzer::addCalibrationPoint(float raw, float actual) {
+    {
+        std::lock_guard<std::mutex> lock(pointsMutex);
+        calibrationPoints.push_back({raw, actual});
+    }
+    computeRegression();
+}
+
+void AudioAnalyzer::removeCalibrationPoint(size_t index) {
+    {
+        std::lock_guard<std::mutex> lock(pointsMutex);
+        if (index < calibrationPoints.size()) {
+            calibrationPoints.erase(calibrationPoints.begin() + index);
+        }
+    }
+    computeRegression();
+}
+
+void AudioAnalyzer::clearCalibrationPoints() {
+    {
+        std::lock_guard<std::mutex> lock(pointsMutex);
+        calibrationPoints.clear();
+    }
+    bpmSlope.store(1.0f);
+    bpmIntercept.store(0.0f);
 }

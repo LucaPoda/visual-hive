@@ -1,0 +1,896 @@
+{
+    "backgrounds": {
+        "104804-668290749_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Blu",
+            "secondary_color": "Nero",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 240
+        },
+        "107964-678971212_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 0
+        },
+        "121515-724709959_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Bianco",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 20
+        },
+        "121532-724710027_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Bianco",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 20
+        },
+        "122489-725502855_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Verde",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 1650
+        },
+        "123750-728698170_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 90
+        },
+        "124836-731949921_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 900
+        },
+        "127702-739144770_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Giallo",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 220
+        },
+        "131760-751029927_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Bianco",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 90
+        },
+        "133105-755975132_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 130
+        },
+        "149172-795746658_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Verde",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 830
+        },
+        "162055-824623636_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 40
+        },
+        "168226-838523553_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Viola",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 100
+        },
+        "182282-868067125_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 10
+        },
+        "189540-886011297_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 190
+        },
+        "204204-923582484_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 30
+        },
+        "204206-923582487_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 150
+        },
+        "205489-926957481_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "manual",
+            "thumbnail_frame_index": 290
+        },
+        "24819-345170531_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 270
+        },
+        "26103-357512282_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Arancione",
+            "secondary_color": "Giallo",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 40
+        },
+        "27067-361827366_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Viola",
+            "secondary_color": "Nero",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 40
+        },
+        "299538.avi": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Rosso",
+            "secondary_color": "Nero",
+            "song_dynamic": "manual",
+            "thumbnail_frame_index": 950
+        },
+        "31149-384242144_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Verde",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 30
+        },
+        "337014_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 40
+        },
+        "337017_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Verde",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 80
+        },
+        "337020_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 440
+        },
+        "337026_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Blu",
+            "secondary_color": "Nero",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 280
+        },
+        "337034_medium.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 350
+        },
+        "34089-400217521_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Viola",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 150
+        },
+        "346050_medium.avi": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 1570
+        },
+        "380948_medium.avi": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Rosso",
+            "secondary_color": "Nero",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 190
+        },
+        "40929-425805644_medium.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 220
+        },
+        "45689-446485375_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Blu",
+            "secondary_color": "Nero",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 1880
+        },
+        "57964-486900381_medium.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Verde",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 50
+        },
+        "loop_01_1.avi": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Arancione",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 250
+        },
+        "loop_02_2.avi": {
+            "event_phase": "ambient",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Arancione",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 60
+        },
+        "loop_03_3.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 160
+        },
+        "loop_04_4.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 140
+        },
+        "loop_09_5.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 210
+        },
+        "loop_10_t.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 120
+        },
+        "loop_11_6.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 40
+        },
+        "loop_12_y.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 90
+        },
+        "loop_13_7.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Rosso",
+            "secondary_color": "Blu",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 110
+        },
+        "loop_14_u.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Rosso",
+            "secondary_color": "Nero",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 190
+        },
+        "loop_15_8.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 190
+        },
+        "loop_16_i.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 10
+        },
+        "loop_17_9.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Viola",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 60
+        },
+        "loop_18_o.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Blu",
+            "secondary_color": "Nero",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 120
+        },
+        "loop_19_0.avi": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 140
+        },
+        "loop_20_p.avi": {
+            "event_phase": "high",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Bianco",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 180
+        },
+        "vecteezy_3d-motion-loop-of-tunnel-epic-abstract-colorful-futuristic_38367039.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 90
+        },
+        "vecteezy_a-bright-disco-ball-with-multicolored-reflections-on-the_13250276.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Blu",
+            "secondary_color": "Arancione",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 470
+        },
+        "vecteezy_cubic-wall-with-white-and-red-lights-reflected-vj-seamless_77034035.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 180
+        },
+        "vecteezy_energetic-skeleton-dance-routine-for-immersive-vj-loop_54225464.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "manual",
+            "thumbnail_frame_index": 140
+        },
+        "vecteezy_glowing-light-blue-square-tunnel-vj-loop_5245101.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Blu",
+            "secondary_color": "Nero",
+            "song_dynamic": "build",
+            "thumbnail_frame_index": 90
+        },
+        "vecteezy_glowing-neon-lights-disco-vj-loops_3284827.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 130
+        },
+        "vecteezy_neon-disco-ball-seamless-vj-loop-animation_13250268.avi": {
+            "event_phase": "high",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 280
+        },
+        "vecteezy_orange-neon-lines-moving-in-turn-background-vj-loop-in-4k_75872347.avi": {
+            "event_phase": "low",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "verse",
+            "thumbnail_frame_index": 40
+        },
+        "vecteezy_sci-fi-glow-red-orange-vortex-tunnel-vj-loop_2264398.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": false,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Rosso",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 280
+        },
+        "vecteezy_vj-loop-3d-tube-with-hole-in-the-matrix-style_23547512.avi": {
+            "event_phase": "mid",
+            "force_no_foreground": true,
+            "foreground_color": [
+                255,
+                255,
+                255
+            ],
+            "key": "",
+            "primary_color": "Nero",
+            "secondary_color": "Blu",
+            "song_dynamic": "chorus",
+            "thumbnail_frame_index": 230
+        }
+    },
+    "default": {
+        "background": "",
+        "foreground": ""
+    },
+    "foregrounds": {
+        "empty.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": false,
+            "key": "",
+            "primary_color": "",
+            "scale": 1.0,
+            "secondary_color": ""
+        },
+        "ph-color.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": true,
+            "key": "",
+            "primary_color": "Giallo",
+            "scale": 50.0,
+            "secondary_color": "Bianco"
+        },
+        "ph-white.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": true,
+            "key": "",
+            "primary_color": "Bianco",
+            "scale": 50.0,
+            "secondary_color": "Bianco"
+        },
+        "poda.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": false,
+            "key": "",
+            "primary_color": "",
+            "scale": 60.0,
+            "secondary_color": ""
+        },
+        "resx.png": {
+            "custom_text": "",
+            "font_size": 32,
+            "force_original_colors": false,
+            "key": "",
+            "primary_color": "",
+            "scale": 60.0,
+            "secondary_color": ""
+        }
+    },
+    "window_captures": {}
+}

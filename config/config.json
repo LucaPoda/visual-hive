@@ -1,0 +1,22 @@
+{
+    "paths": {
+        "assets_directory": "assets",
+        "key_mapping_file": "config/key_mapping.csv",
+        "assets_config_file": "config/assets_config.json"
+    },
+    "display": {
+        "window_name": "Visual Hive Live"
+    },
+    "ableton_link": {
+        "phrase_length": 4,
+        "default_bpm": 120.0
+    },
+    "bpm_calibration": {
+        "slope": 1.08,
+        "intercept": -6.6,
+        "points": [
+            { "raw": 120.0, "actual": 123.0 },
+            { "raw": 145.0, "actual": 150.0 }
+        ]
+    }
+}
